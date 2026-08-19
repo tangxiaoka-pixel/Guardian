@@ -1179,12 +1179,21 @@ function forgeSourceNote(raw = {}, existing = {}) {
   const collectionType = forgeSampleCollectionType(raw, existing).toLowerCase()
   const existingNote = String(raw.source_note || raw.sourceNote || existing?.source_note || '').trim()
   if (existingNote && !/KKOS 新采集|现场新采集/.test(existingNote)) return existingNote
+  const judgement = raw.sample_judgement || raw.sampleJudgement || existing?.sample_judgement || existing?.sampleJudgement || {}
+  const l1Judgement = judgement?.l1 || {}
+  const l2Judgement = judgement?.l2 || {}
   const hasL2Evidence = forgeEdgeStageReported(raw.l2 || raw.l2_result, raw.l2_status)
     || (Array.isArray(raw.l2_bbox) && raw.l2_bbox.length >= 4)
     || (Array.isArray(raw.l2_boxes) && raw.l2_boxes.length > 0)
+    || forgeEdgeStageReported(l2Judgement)
+    || (Array.isArray(l2Judgement.bbox) && l2Judgement.bbox.length >= 4)
+    || (Array.isArray(l2Judgement.boxes) && l2Judgement.boxes.length > 0)
   const hasL1Evidence = forgeEdgeStageReported(raw.l1 || raw.l1_result, raw.l1_status)
     || (Array.isArray(raw.l1_bbox) && raw.l1_bbox.length >= 4)
     || (Array.isArray(raw.l1_boxes) && raw.l1_boxes.length > 0)
+    || forgeEdgeStageReported(l1Judgement)
+    || (Array.isArray(l1Judgement.bbox) && l1Judgement.bbox.length >= 4)
+    || (Array.isArray(l1Judgement.boxes) && l1Judgement.boxes.length > 0)
 
   if (collectionType.includes('periodic') || collectionType.includes('miss_guard')) {
     return '防漏报定期抽帧：按摄像头 × 算法限频抽取完整 ROI，直接进入 Forge/VLM，用于发现静态目标漏检。'

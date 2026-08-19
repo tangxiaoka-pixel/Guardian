@@ -67,19 +67,20 @@ router.beforeEach((to) => {
   const storedMode = localStorage.getItem('guardian_console_mode') || 'platform'
   const mode = storedMode === 'customer' || storedMode === 'project' || storedMode === 'project_manager' ? 'project_manager' : storedMode === 'project_operator' ? 'project_operator' : 'platform'
   if (storedMode === 'customer' || storedMode === 'project') localStorage.setItem('guardian_console_mode', 'project_manager')
-  const platformPaths = ['/dashboard', '/customer-center', '/audit', '/role-matrix', '/platform-edge-gateways', '/devices-logs', '/capacity-planner', '/scenario-policies', '/algorithm-details', '/forge', '/forge/materials', '/forge/vlm-audit', '/forge/human-review', '/forge/datasets', '/forge/release', '/model-registry', '/ai-lifecycle', '/closed-loop-trace']
-  const projectManagerPaths = ['/customer-workspace', '/edge-gateways', '/streams', '/camera-bindings', '/runtime-configs', '/l1-monitor', '/l2-monitor', '/alarm-center', '/event-handling', '/device-status', '/project-settings', '/human-review', '/core-logs', '/ai-lifecycle', '/forge/materials', '/forge/vlm-audit', '/forge/human-review', '/forge/datasets', '/forge/release']
+  const platformPaths = ['/dashboard', '/customer-center', '/audit', '/role-matrix', '/platform-edge-gateways', '/devices-logs', '/capacity-planner', '/algorithm-details', '/closed-loop-trace']
+  const projectManagerPaths = ['/customer-workspace', '/edge-gateways', '/streams', '/camera-bindings', '/runtime-configs', '/l1-monitor', '/l2-monitor', '/alarm-center', '/event-handling', '/device-status', '/project-settings', '/human-review', '/core-logs', '/ai-lifecycle', '/scenario-policies', '/forge', '/forge/materials', '/forge/vlm-audit', '/forge/human-review', '/forge/datasets', '/forge/release', '/forge/centers', '/forge/activation', '/forge/project-bindings', '/forge/device-bindings', '/forge/sample-policies', '/forge/model-versions', '/forge/release-approvals', '/forge/releases', '/forge/heartbeats', '/forge/sync-logs', '/model-registry']
   const projectOperatorPaths = ['/customer-workspace', '/alarm-center', '/event-handling', '/device-status', '/core-logs']
   const projectPaths = Array.from(new Set([...projectManagerPaths, ...projectOperatorPaths]))
-  if (mode === 'platform' && projectPaths.includes(to.path)) {
+  const trainingCenterPaths = ['/ai-lifecycle', '/scenario-policies', '/model-registry']
+  const isTrainingCenterPath = to.path.startsWith('/forge') || trainingCenterPaths.includes(to.path)
+  if (mode === 'platform' && (projectPaths.includes(to.path) || isTrainingCenterPath)) {
     return '/customer-center'
   }
   if (mode !== 'platform' && (!localStorage.getItem('guardian_customer_id') || !localStorage.getItem('guardian_site_id'))) {
     localStorage.setItem('guardian_console_mode', 'platform')
     return '/customer-center'
   }
-  const forgeProjectViews = ['/forge/materials', '/forge/vlm-audit', '/forge/human-review', '/forge/datasets', '/forge/release']
-  if (mode !== 'platform' && platformPaths.includes(to.path) && to.path !== '/ai-lifecycle' && !forgeProjectViews.includes(to.path)) {
+  if (mode !== 'platform' && platformPaths.includes(to.path)) {
     return '/customer-workspace'
   }
   if (mode === 'project_operator' && !projectOperatorPaths.includes(to.path) && to.path !== '/login') {

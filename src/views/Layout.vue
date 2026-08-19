@@ -54,18 +54,6 @@ const platformMenuGroups = [
       { path: '/devices-logs', label: '平台日志' },
     ],
   },
-  {
-    label: 'Forge 训练中心',
-    children: [
-      { path: '/scenario-policies', label: '场景模板 / 冷启动' },
-      { path: '/forge/materials', label: '素材收集' },
-      { path: '/forge/vlm-audit', label: 'VLM 审计' },
-      { path: '/forge/human-review', label: '人工审核' },
-      { path: '/forge/datasets', label: '训练数据集' },
-      { path: '/forge/release', label: '训练与发布' },
-      { path: '/model-registry', label: '模型仓库' },
-    ],
-  },
 ]
 const projectManagerMenuGroups = [
   {
@@ -96,11 +84,13 @@ const projectManagerMenuGroups = [
   {
     label: 'Forge 训练中心',
     children: [
+      { path: '/scenario-policies', label: '场景模板 / 冷启动' },
       { path: '/forge/materials', label: '素材收集' },
       { path: '/forge/vlm-audit', label: 'VLM 审计' },
       { path: '/forge/human-review', label: '人工审核' },
       { path: '/forge/datasets', label: '训练数据集' },
       { path: '/forge/release', label: '训练与发布' },
+      { path: '/model-registry', label: '模型仓库' },
     ],
   },
 ]

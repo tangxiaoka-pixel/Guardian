@@ -1617,20 +1617,24 @@ function materialPool() {
     // Forge 8876 persists the VLM localisation as `bbox_norm`.  Preserve that
     // exact field all the way to the admin UI; do not substitute an edge box.
     const rawVlmBoxes = sample.vlm?.boxes || sample.vlm?.bbox_norm || sample.vlm?.bbox_xyxy_norm || sample.vlm?.bbox || sample.label_bbox_norm || []
+    const l1Status = sample.l1_status || (sample.source_event_id ? 'hit' : 'not_run')
+    const l2Status = sample.l2_status || 'not_run'
+    const l1Reported = !['not_reported', 'not_run', 'pending', ''].includes(String(l1Status || ''))
+    const l2Reported = !['not_reported', 'not_run', 'pending', ''].includes(String(l2Status || ''))
     const vlmAuditedAt = normalizeLogTime(sample.vlm?.at || sample.vlm?.audited_at || sample.updated_at || createdAt)
     const judgement = {
       l1: {
-        status: sample.l1_status || (sample.source_event_id ? 'hit' : 'not_run'),
+        status: l1Status,
         classes: sample.target_classes || sample.classes || [],
         confidence: Number(sample.l1_candidate_score || sample.confidence || 0),
-        bbox: sample.bbox || [],
+        bbox: l1Reported ? (sample.bbox || []) : [],
         model_version: sample.l1_model_version || 'rv1126_l1',
       },
       l2: {
-        status: sample.l2_status || 'not_run',
+        status: l2Status,
         classes: sample.l2_classes || [],
         confidence: Number(sample.l2_confidence || 0),
-        bbox: sample.l2_bbox || [],
+        bbox: l2Reported ? (sample.l2_bbox || []) : [],
         model_version: sample.l2_model_version || 'rk3568_l2',
         reason: sample.l2_reason || '',
       },
@@ -2031,19 +2035,23 @@ function forgeMaterialRows() {
     const privacyStatus = trustedPrivacy ? 'privacy_processed' : 'legacy_provenance_unknown'
     const createdRaw = sample.created_at || sample.uploaded_at || sample.received_at || businessNow()
     const createdAt = normalizeLogTime(createdRaw)
+    const l1Status = l1Evidence.status || sample.l1_status || (Array.isArray(l1Boxes) && l1Boxes.length ? 'hit' : 'not_reported')
+    const l2Status = l2Evidence.status || sample.l2_status || (Array.isArray(l2Boxes) && l2Boxes.length ? 'hit' : 'not_reported')
+    const l1Reported = !['not_reported', 'not_run', 'pending', ''].includes(String(l1Status || ''))
+    const l2Reported = !['not_reported', 'not_run', 'pending', ''].includes(String(l2Status || ''))
     const judgement = {
       l1: {
-        status: l1Evidence.status || sample.l1_status || (Array.isArray(l1Boxes) && l1Boxes.length ? 'hit' : 'not_reported'),
+        status: l1Status,
         classes: l1Evidence.classes || l1Evidence.class_names || sample.l1_classes || [],
         confidence: Number(l1Evidence.confidence ?? l1Evidence.score ?? sample.l1_confidence ?? 0),
-        bbox: Array.isArray(l1Boxes) ? l1Boxes : [],
+        bbox: l1Reported && Array.isArray(l1Boxes) ? l1Boxes : [],
         model_version: l1Evidence.model_version || sample.l1_model_version || '',
       },
       l2: {
-        status: l2Evidence.status || sample.l2_status || (Array.isArray(l2Boxes) && l2Boxes.length ? 'hit' : 'not_reported'),
+        status: l2Status,
         classes: l2Evidence.classes || l2Evidence.class_names || sample.l2_classes || [],
         confidence: Number(l2Evidence.confidence ?? l2Evidence.score ?? sample.l2_confidence ?? 0),
-        bbox: Array.isArray(l2Boxes) ? l2Boxes : [],
+        bbox: l2Reported && Array.isArray(l2Boxes) ? l2Boxes : [],
         model_version: l2Evidence.model_version || sample.l2_model_version || '',
         reason: l2Evidence.reason || sample.l2_reason || '',
       },
@@ -2097,8 +2105,8 @@ function forgeMaterialRows() {
       thumbnail_url: forgeSamplePreviewUrl(sample, 'raw'),
       frame_path: sample.image_path || '',
       raw_bbox: Array.isArray(sample.bbox) ? sample.bbox : [],
-      l1_bbox: Array.isArray(l1Boxes) ? l1Boxes : [],
-      l2_bbox: Array.isArray(l2Boxes) ? l2Boxes : [],
+      l1_bbox: l1Reported && Array.isArray(l1Boxes) ? l1Boxes : [],
+      l2_bbox: l2Reported && Array.isArray(l2Boxes) ? l2Boxes : [],
       vlm_boxes: Array.isArray(rawVlmBoxes) ? rawVlmBoxes : [],
       vlm_audited_at: vlmAuditedAt,
       vlm_raw: sample.vlm || {},

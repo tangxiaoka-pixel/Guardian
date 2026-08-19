@@ -1808,9 +1808,15 @@ function materialPool() {
   return [...forgeRows, ...candidateRows, ...registryOnlyRows].map((item) => {
     if (item?.source_type !== 'guardian_forge_live') return item
     const vlm = item.sample_judgement?.vlm
+    const canonicalSourceNote = forgeSourceNote({
+      ...item,
+      sample_judgement: item.sample_judgement,
+      sampleJudgement: item.sample_judgement,
+    }, item)
     return {
       ...item,
       teacher_model: 'guardian-vlm',
+      source_note: canonicalSourceNote,
       sample_judgement: vlm
         ? { ...item.sample_judgement, vlm: { ...vlm, teacher_model: 'guardian-vlm' } }
         : item.sample_judgement,

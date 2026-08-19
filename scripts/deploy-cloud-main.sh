@@ -22,9 +22,9 @@ fi
 if ! git remote get-url origin >/dev/null 2>&1; then
   git remote add origin git@github.com:tangxiaoka-pixel/Guardian.git
 fi
-export GIT_SSH_COMMAND='ssh -i /root/.ssh/guardian_github_deploy -o IdentitiesOnly=yes'
-git fetch origin main
-git checkout -B main origin/main
+export GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10 -i /root/.ssh/guardian_github_deploy -o IdentitiesOnly=yes'
+git fetch --depth=1 origin main
+git checkout -f -B main origin/main
 npm ci
 npm run build
 rsync -rc --delete --exclude='.DS_Store' dist/ "$WEB_DIR/"

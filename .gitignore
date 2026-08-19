@@ -1,0 +1,34 @@
+# Dependencies and generated frontend output
+node_modules/
+dist/
+.vite/
+
+# Cloud runtime state: alarms, samples, cached API responses and uploads
+runtime/
+uploads/
+samples/
+data/
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# Models and large training artifacts live in the model registry/object storage
+models/
+*.pt
+*.onnx
+*.rknn
+*.engine
+
+# Secrets and local machine configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/

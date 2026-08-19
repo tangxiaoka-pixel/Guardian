@@ -1,0 +1,27 @@
+{
+  "name": "guardian-admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "cloud-api": "node guardian-cloud-api.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext .vue,.ts"
+  },
+  "dependencies": {
+    "vue": "^3.4.27",
+    "vue-router": "^4.3.2",
+    "pinia": "^2.1.7",
+    "element-plus": "^2.7.3",
+    "axios": "^1.7.2",
+    "@element-plus/icons-vue": "^2.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "vite": "^5.2.11",
+    "typescript": "^5.4.5",
+    "eslint": "^9.3.0"
+  }
+}

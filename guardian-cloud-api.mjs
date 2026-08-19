@@ -2134,7 +2134,7 @@ function forgeMaterialRows() {
       scenario,
       source_event_id: sample.traceId || sample.trace_id || sample.trigger_id || sample.edge_event_id || sample.l1_event_id || '',
       source_type: legacy ? 'guardian_forge_historical' : 'guardian_forge_live',
-      source_note: legacy ? '历史 Forge 裁剪素材：不符合当前“完整 ROI + 本地脱敏”标准，已隔离，禁止 VLM、人工审核和训练。' : forgeSourceNote(sample, sample),
+      source_note: legacy ? '历史 Forge 裁剪素材：不符合当前“完整 ROI + 本地脱敏”标准，已隔离，禁止 VLM、人工审核和训练。' : forgeSourceNote({ ...sample, sample_judgement: judgement }, sample),
       collection_type: sample.collection_type || sample.collectionType || sample.ingest_type || sample.ingestType || sample.sampleType || sample.sample_type || '',
       sample_category: category,
       sample_type: sample.sample_type || category,

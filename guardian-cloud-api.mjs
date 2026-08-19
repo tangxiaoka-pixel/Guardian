@@ -1166,6 +1166,35 @@ function normalizeLegacyCloudSample(sample = {}) {
   }
 }
 
+function forgeSampleCollectionType(raw = {}, existing = {}) {
+  return String(raw.sample_type || raw.sampleType || raw.collection_type || raw.collectionType || existing?.collection_type || '').trim()
+}
+
+function forgeEdgeStageReported(stage = {}, fallback = '') {
+  const value = String(stage?.status || fallback || '').toLowerCase()
+  return Boolean(value) && !['not_reported', 'not_run', 'pending', 'queued', ''].includes(value)
+}
+
+function forgeSourceNote(raw = {}, existing = {}) {
+  const collectionType = forgeSampleCollectionType(raw, existing).toLowerCase()
+  const existingNote = String(raw.source_note || raw.sourceNote || existing?.source_note || '').trim()
+  if (existingNote && !/KKOS 新采集|现场新采集/.test(existingNote)) return existingNote
+
+  if (collectionType.includes('periodic') || collectionType.includes('miss_guard')) {
+    return '防漏报定期抽帧：按摄像头 × 算法限频抽取完整 ROI，直接进入 Forge/VLM，用于发现静态目标漏检。'
+  }
+  if (collectionType.includes('disagree') || String(raw.disagreement_type || raw.disagreementType || existing?.disagreement_type || '').includes('disagree')) {
+    return 'L1/L2 判断不一致上报：边缘两级模型结论存在差异，进入 Forge 用于审计、修正和困难样本沉淀。'
+  }
+  if (collectionType.includes('l2') || collectionType.includes('alarm') || forgeEdgeStageReported(raw.l2 || raw.l2_result, raw.l2_status)) {
+    return 'L2 命中上报：L1 候选经 L2 复核命中后进入 Forge，用于审计、训练和回溯。'
+  }
+  if (collectionType.includes('l1') || forgeEdgeStageReported(raw.l1 || raw.l1_result, raw.l1_status)) {
+    return 'L1 命中上报：L1 NPU 识别到候选饮品容器后进入 Forge，用于 L2/VLM/人工闭环。'
+  }
+  return 'KKOS 规则事件采集：现场规则触发后进入 Forge，等待 VLM 审计和人工抽检。'
+}
+
 function ingestForgeSample(body = {}) {
   const raw = body.sample && typeof body.sample === 'object' ? body.sample : body
   const forgeSampleId = String(raw.sample_id || raw.id || '').trim()
@@ -1219,6 +1248,7 @@ function ingestForgeSample(body = {}) {
   const vlmAuditedAt = String(vlm.audited_at || vlm.at || raw.vlm_audited_at || raw.updated_at || raw.created_at || businessNow())
   const samples = lifecycleRegistry('samples')
   const existing = samples.find((item) => item.sample_id === localId)
+  const collectionType = forgeSampleCollectionType(raw, existing)
   const row = {
     ...(existing || {}),
     sample_id: localId,
@@ -1229,10 +1259,8 @@ function ingestForgeSample(body = {}) {
     scenario,
     source_event_id: String(raw.trace_id || raw.traceId || raw.trigger_id || raw.triggerId || ''),
     source_type: 'guardian_forge_live',
-    source_note: String(raw.sample_type || raw.sampleType || existing?.collection_type || '') === 'periodic_miss_guard'
-      ? 'KKOS 防漏检定期抽帧：按摄像头 × 算法限频采集，直接进入素材库与 VLM，不进入 L2 实时复核。'
-      : 'KKOS 新采集，Forge 已完成本地脱敏与 VLM 标注草稿；待人工审核。',
-    collection_type: String(raw.sample_type || raw.sampleType || existing?.collection_type || ''),
+    source_note: forgeSourceNote(raw, existing),
+    collection_type: collectionType,
     sample_type: category,
     privacy_status: 'privacy_processed',
     // Preserve the exact edge privacy version.  The newer complete-frame
@@ -2085,8 +2113,8 @@ function forgeMaterialRows() {
       scenario,
       source_event_id: sample.traceId || sample.trace_id || sample.trigger_id || sample.edge_event_id || sample.l1_event_id || '',
       source_type: legacy ? 'guardian_forge_historical' : 'guardian_forge_live',
-      source_note: legacy ? '历史 Forge 裁剪素材：不符合当前“完整 ROI + 本地脱敏”标准，已隔离，禁止 VLM、人工审核和训练。' : (sample.source_note || sample.sourceNote || '现场新采集：完整桌面 ROI 已在 KKOS 本地脱敏，自动 VLM 审计后等待人工复核。'),
-      collection_type: sample.sampleType || sample.sample_type || '',
+      source_note: legacy ? '历史 Forge 裁剪素材：不符合当前“完整 ROI + 本地脱敏”标准，已隔离，禁止 VLM、人工审核和训练。' : forgeSourceNote(sample, sample),
+      collection_type: sample.sampleType || sample.sample_type || sample.collection_type || sample.collectionType || '',
       sample_category: category,
       sample_type: sample.sample_type || category,
       sample_judgement: judgement,

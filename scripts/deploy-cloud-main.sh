@@ -14,6 +14,7 @@ git pull --ff-only origin main
 
 ssh "$cloud_host" "
   set -euo pipefail
+  git config --global --add safe.directory '$cloud_dir'
   cd '$cloud_dir'
   if [ ! -d .git ]; then
     git init

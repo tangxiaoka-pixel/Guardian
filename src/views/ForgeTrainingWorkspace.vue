@@ -32,6 +32,7 @@
           <el-table-column prop="scenario" label="算法 / 场景" min-width="190" />
           <el-table-column label="采集时间" min-width="180"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
           <el-table-column label="来源" width="150"><template #default="{ row }"><el-tag :type="row.source_type === 'guardian_forge_historical' ? 'warning' : 'success'">{{ sourceLabel(row) }}</el-tag></template></el-table-column>
+          <el-table-column label="上报原因" min-width="260" show-overflow-tooltip><template #default="{ row }">{{ collectionReason(row) }}</template></el-table-column>
           <el-table-column label="隐私与授权" min-width="180"><template #default="{ row }"><span :class="row.privacy_status === 'privacy_processed' ? 'ok' : 'blocked'">{{ privacyLabel(row) }}</span></template></el-table-column>
           <el-table-column label="处理状态" min-width="180"><template #default="{ row }">{{ flowLabel(row) }}</template></el-table-column>
           <el-table-column label="当前阶段" width="150"><template #default="{ row }"><el-tag :type="stageType(row)">{{ stageLabel(row) }}</el-tag></template></el-table-column>
@@ -92,12 +93,13 @@
       <div v-if="selected" class="detail">
         <div>
           <div class="image-stage-head"><b>{{ activeStageView.title }}</b><span>{{ activeStageView.subtitle }}</span></div>
-          <div class="audit-image"><img :src="asset(activeStageView.imageUrl)" @load="recordImageSize" @error="hideImage" /><template v-for="(item,index) in activeDrawableBoxes" :key="index"><span :class="['audit-box', item.source]" :style="boxStyle(item.box)" :aria-label="item.label" :title="item.label"></span></template></div>
+          <div class="audit-image"><img :key="activeStageView.imageUrl" :src="asset(activeStageView.imageUrl)" @load="recordImageSize" @error="hideImage" /><template v-for="(item,index) in activeDrawableBoxes" :key="index"><span :class="['audit-box', item.source]" :style="boxStyle(item.box)" :aria-label="item.label" :title="item.label"></span></template></div>
           <div v-if="activeDrawableBoxes.length" class="box-legend"><span v-for="item in activeBoxLegend" :key="item.source" :class="['legend-dot', item.source]"></span><template v-for="(item, index) in activeBoxLegend" :key="`${item.source}-label`"><span>{{ item.label }}</span><i v-if="index < activeBoxLegend.length - 1">·</i></template></div>
           <p class="box-note">{{ boxNote(selected, activeDetailStage) }}</p>
         </div>
         <div class="chain-detail">
           <p><b>素材 ID：</b>{{ selected.sample_id }}</p><p><b>场景：</b>{{ selected.scenario }}</p>
+          <div v-if="edgeVlmWarning(selected)" class="consistency-warning">{{ edgeVlmWarning(selected) }}</div>
           <div class="lifecycle-stages"><b>完整处理链路</b><button v-for="stageItem in lifecycleStages(selected)" :key="stageItem.key" type="button" class="stage-card" :class="[stageItem.state, { selected: activeDetailStage === stageItem.key }]" @click="selectDetailStage(stageItem.key)"><strong>{{ stageItem.index }} {{ stageItem.title }}</strong><span>{{ stageItem.summary }}</span><small v-if="stageItem.detail">{{ stageItem.detail }}</small></button></div>
         </div>
       </div>
@@ -217,8 +219,11 @@ function normaliseBox(raw:any,width:number,height:number){
   const isNorm=Math.max(Math.abs(a),Math.abs(b),Math.abs(c),Math.abs(d))<=1.01
   const fmt=payload.format
   let x1=a,y1=b,x2=c,y2=d
+  if(fmt.includes('cxcywh') || fmt.includes('center')){
+    x1=a-c/2; y1=b-d/2; x2=a+c/2; y2=b+d/2
+  }
   const canBeXywh=isNorm ? a+c<=1.05 && b+d<=1.05 : Boolean(width && height && a+c<=width*1.05 && b+d<=height*1.05)
-  if(fmt.includes('xywh') || ((c<=a || d<=b) && canBeXywh)){ x2=a+c; y2=b+d }
+  if((fmt.includes('xywh') && !fmt.includes('cxcywh')) || ((c<=a || d<=b) && canBeXywh)){ x2=a+c; y2=b+d }
   if(x2<=x1 || y2<=y1) return null
   if(isNorm) return [x1,y1,x2,y2]
   if(!width || !height) return null
@@ -239,7 +244,7 @@ function boxLegendForItems(items:any[]){
 }
 function boxNote(_row:any, stageKey='raw'){ const boxes=activeDrawableBoxes.value; if(!boxes.length) return stageKey === 'raw' || stageKey === 'privacy' ? '此步骤展示完整 ROI 脱敏图，不叠加目标框。' : '当前步骤未返回可绘制定位框；这不等同于没有产生该阶段，只表示该阶段没有返回坐标。'; return '框内不填充颜色、不显示文字，以便直接查看桌面与目标。图例仅说明当前步骤的边框来源。' }
 function boxStyle(box:any){ const [x1,y1,x2,y2]=box.map(Number); if(![x1,y1,x2,y2].every(Number.isFinite)) return {}; return {left:`${Math.max(0,x1)*100}%`,top:`${Math.max(0,y1)*100}%`,width:`${Math.max(0,x2-x1)*100}%`,height:`${Math.max(0,y2-y1)*100}%`} }
-function sourceLabel(r:any){ if(r.source_type === 'guardian_forge_historical') return '历史隔离'; if(['periodic_miss_guard','periodic_scan','miss_guard'].includes(r.collection_type)) return '防漏检定期抽帧'; if(['l2_alarm_frame','alarm','confirmed_alarm'].includes(r.collection_type)) return '现场报警关键帧'; if(String(r.disagreement_type || '').includes('disagree')) return 'L1/L2 判断不一致'; return 'KKOS 事件采集' }
+function sourceLabel(r:any){ if(r.source_type === 'guardian_forge_historical') return '历史隔离'; const kind=collectionKind(r); if(kind==='periodic') return '防漏报定期抽帧'; if(kind==='l2') return 'L2 命中上报'; if(kind==='l1') return 'L1 命中上报'; if(kind==='disagree') return 'L1/L2 判断不一致'; return 'KKOS 事件采集' }
 function privacyLabel(r:any){ return r.privacy_status === 'privacy_processed' ? '完整 ROI · 本地脱敏 · 已授权' : r.privacy_status === 'legacy_provenance_unknown' ? '历史来源不可验证（已隔离）' : r.privacy_status || '待处理' }
 function flowLabel(r:any){ if(r.source_type === 'guardian_forge_historical') return '隔离：不可进入闭环'; const v=r.sample_judgement?.vlm?.status || r.vlm_status; const h=r.sample_judgement?.human?.status; return h === 'human_reviewed' ? '人工已确认' : needsHuman(r) ? '等待人工审核' : ['positive','negative','completed','suspected_hazard','no_hazard'].includes(v) ? 'VLM 已生成草稿' : '等待 VLM 自动审计' }
 function decisionLabel(v:string){ return ({positive:'饮品容器',suspected_hazard:'饮品容器',negative:'非饮品容器',no_hazard:'未见饮品容器',uncertain:'不确定',pending:'等待审计',not_run:'等待审计',failed:'审计失败'} as any)[v] || v }
@@ -254,11 +259,63 @@ function edgeStageSummary(stage:any, label:string){
   return `${stage.status === 'hit' ? '命中' : stage.status} · ${classes}${confidence ? ` · ${Math.round(confidence * 100)}%` : ''}`
 }
 function isEdgeStageReported(stage:any){ return Boolean(stage && !['not_reported','not_run','pending',''].includes(String(stage.status || ''))) }
+function collectionKind(row:any){
+  const type=String(row.collection_type || row.sample_type || '').toLowerCase()
+  const note=String(row.source_note || row.reason || '').toLowerCase()
+  const l1=row.sample_judgement?.l1 || {}
+  const l2=row.sample_judgement?.l2 || {}
+  if(row.source_type === 'guardian_forge_historical') return 'legacy'
+  if(['l2_alarm_frame','alarm','confirmed_alarm'].includes(type) || note.includes('l2 已确认') || note.includes('报警')) return 'l2'
+  if(type.includes('disagree') || String(row.disagreement_type || '').includes('disagree')) return 'disagree'
+  if(['periodic_miss_guard','periodic_scan','miss_guard'].includes(type) || note.includes('防漏') || note.includes('定期') || note.includes('漏报') || note.includes('30 秒')) return 'periodic'
+  if(isEdgeStageReported(l2)) return 'l2'
+  if(isEdgeStageReported(l1) || type.includes('l1') || note.includes('l1')) return 'l1'
+  return 'event'
+}
 function collectionReason(row:any){
-  if(['l2_alarm_frame','alarm','confirmed_alarm'].includes(row.collection_type)) return '报警：现场 L2 已确认风险后上报关键帧'
-  if(String(row.disagreement_type || '').includes('disagree')) return 'L1 和 L2 判断不一致：用于回溯模型差异'
-  if(['periodic_miss_guard','periodic_scan','miss_guard'].includes(row.collection_type)) return '漏报抽帧：定期兜底采样，防止静态目标漏检'
+  const kind=collectionKind(row)
+  if(kind === 'legacy') return '历史隔离素材：来源或隐私链路不符合当前训练标准'
+  if(kind === 'l2') return 'L2 命中上报：现场 L2 复核确认风险后进入 Forge 素材库'
+  if(kind === 'l1') return 'L1 命中上报：L1 NPU 识别到候选目标后进入 Forge 素材库'
+  if(kind === 'disagree') return 'L1/L2 判断不一致：用于回溯边缘模型差异与困难样本'
+  if(kind === 'periodic') return '防漏报定期抽帧：按配置周期抽取完整 ROI，直接进入 Forge/VLM，防止静态目标漏检'
   return row.source_note || '现场事件采集：KKOS 在画面变化或规则命中后上报'
+}
+function isHazardStage(stage:any){
+  if(!isEdgeStageReported(stage)) return false
+  const classes=Array.isArray(stage.classes) ? stage.classes.map((item:any)=>String(item).toLowerCase()) : []
+  const status=String(stage.status || '').toLowerCase()
+  return ['hit','confirmed','positive'].includes(status) || classes.some((item:string)=>['cup','mug','bottle','thermos','can','drink_container','container'].includes(item))
+}
+function isHazardVlm(vlm:any){
+  const status=String(vlm?.status || '').toLowerCase()
+  const category=String(vlm?.suggested_category || '').toLowerCase()
+  const labels=Array.isArray(vlm?.suggested_labels) ? vlm.suggested_labels.map((item:any)=>String(item).toLowerCase()) : []
+  return ['positive','suspected_hazard'].includes(status) || ['positive','drink_container','container','cup','bottle'].includes(category) || labels.some((item:string)=>item.includes('drink') || ['cup','mug','bottle','thermos','can'].includes(item))
+}
+function boxIou(a:any,b:any){
+  if(!a || !b) return 0
+  const x1=Math.max(a[0],b[0]), y1=Math.max(a[1],b[1]), x2=Math.min(a[2],b[2]), y2=Math.min(a[3],b[3])
+  const inter=Math.max(0,x2-x1)*Math.max(0,y2-y1)
+  const areaA=Math.max(0,a[2]-a[0])*Math.max(0,a[3]-a[1])
+  const areaB=Math.max(0,b[2]-b[0])*Math.max(0,b[3]-b[1])
+  return inter/(areaA+areaB-inter || 1)
+}
+function edgeVlmWarning(row:any){
+  const l1=row.sample_judgement?.l1 || {}
+  const l2=row.sample_judgement?.l2 || {}
+  const vlm=row.sample_judgement?.vlm || {}
+  const edgeHit=isHazardStage(l1) || isHazardStage(l2)
+  const vlmHit=isHazardVlm(vlm)
+  const vlmDone=!['pending','not_run','queued','running',''].includes(String(vlm.status || '').toLowerCase())
+  if(vlmDone && vlmHit && !edgeHit) return '注意：VLM 判断存在饮品容器，但当前素材没有 L1/L2 命中上报，疑似边缘漏检或防漏报抽帧样本，需要人工确认。'
+  if(vlmDone && edgeHit && !vlmHit) return '注意：L1/L2 命中饮品容器，但 VLM 未确认，疑似误报或 VLM 漏判，需要人工确认。'
+  const width=selectedImageSize.value.width, height=selectedImageSize.value.height
+  const edgeRaw=(asBoxes(l2.bbox).length ? l2.bbox : l1.bbox) || []
+  const edgeBox=asBoxes(edgeRaw).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean)[0]
+  const vlmBox=asBoxes(row.vlm_boxes || vlm.boxes || vlm.bbox_norm || row.label_bbox_norm).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean)[0]
+  if(edgeHit && vlmHit && edgeBox && vlmBox && boxIou(edgeBox,vlmBox)<0.2) return '注意：VLM 标注框与 L1/L2 检测框位置偏差较大，不能直接作为训练标签，建议人工修框。'
+  return ''
 }
 function lifecycleStages(row:any){
   const l1=row.sample_judgement?.l1 || {}
@@ -268,11 +325,11 @@ function lifecycleStages(row:any){
   const trainingEligible=row.training_eligibility === 'eligible'
   const vlmDecision=decisionLabel(vlm.suggested_category || vlm.status || 'pending')
   return [
-    {key:'raw',index:'①',title:'原图与上报原因',state:'done',summary:`${formatTime(row.created_at)} · ${sourceLabel(row)}`,detail:`上报原因：${collectionReason(row)}。原始未脱敏图仅保留在现场 KKOS，云端不保存。`},
+    {key:'raw',index:'①',title:'原图与上报原因',state:'done',summary:`${formatTime(row.created_at)} · ${sourceLabel(row)}`,detail:`${collectionReason(row)}。原始未脱敏图仅保留在现场 KKOS，云端不保存。`},
     {key:'l1',index:'②',title:'L1 标记',state:l1.status === 'hit' ? 'done' : 'waiting',summary:edgeStageSummary(l1,'L1'),detail:isEdgeStageReported(l1) && asBoxes(l1.bbox).length ? `已返回 ${asBoxes(l1.bbox).length} 个 L1 框（见图例）。` : '无 L1 坐标可绘制。'},
     {key:'l2',index:'③',title:'L2 标记',state:l2.status === 'hit' || l2.status === 'confirmed' ? 'done' : 'waiting',summary:edgeStageSummary(l2,'L2'),detail:isEdgeStageReported(l2) && asBoxes(l2.bbox).length ? `已返回 ${asBoxes(l2.bbox).length} 个 L2 框（见图例）。` : '无 L2 坐标可绘制。'},
     {key:'privacy',index:'④',title:'本地脱敏内容',state:row.privacy_status === 'privacy_processed' ? 'done' : 'blocked',summary:privacyLabel(row),detail:row.privacy_actions?.length ? `处理动作：${row.privacy_actions.join('、')}` : `处理方法：${row.privacy_method || '未上报'}`},
-    {key:'vlm',index:'⑤',title:'VLM 审计标注',state:['pending','not_run'].includes(vlm.status) ? 'waiting' : 'done',summary:`${auditModel(row)} · ${vlmDecision}${vlm.confidence ? ` · ${Math.round(Number(vlm.confidence)*100)}%` : ''}`,detail:vlm.reason || '等待自动审计结果。'},
+    {key:'vlm',index:'⑤',title:'VLM 审计标注',state:['pending','not_run'].includes(vlm.status) ? 'waiting' : 'done',summary:`${auditModel(row)} · ${vlmDecision}${vlm.confidence ? ` · ${Math.round(Number(vlm.confidence)*100)}%` : ''}`,detail:[vlm.reason || '等待自动审计结果。', edgeVlmWarning(row)].filter(Boolean).join('；')},
     {key:'human',index:'⑥',title:'人工确认 / 标注',state:human.status === 'human_reviewed' ? 'done' : 'waiting',summary:human.status === 'human_reviewed' ? `已确认${human.reviewed_at ? ` · ${formatTime(human.reviewed_at)}` : ''}` : '未人工确认',detail:human.comment || (needsHuman(row) ? '此素材需要人工确认最终类别或目标框。' : '当前自动标注可继续等待人工抽检。')},
     {key:'training',index:'⑦',title:'训练准入与最终标签',state:trainingEligible ? 'done' : 'waiting',summary:trainingEligible ? '可进入训练数据集' : '暂不可进入训练',detail:trainingEligible ? `最终标签：${row.sample_category || vlmDecision}；准入原因：隐私、授权与标注条件已满足。` : `阻塞原因：${row.blocked_reasons?.join('、') || '等待 VLM 或人工审核完成'}`},
   ]
@@ -282,5 +339,5 @@ onMounted(refresh)
 </script>
 
 <style scoped>
-.page-head{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}.page-head h2{margin:3px 0 8px}.page-head p{margin:0;color:#71809a}.eyebrow{font-size:13px;color:#3277d8;font-weight:700}.context-card,.panel{margin-bottom:16px}.context{display:grid;grid-template-columns:1fr 1fr 1fr 1.7fr;gap:14px;align-items:end}.context label{display:grid;gap:6px;color:#667792;font-size:13px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}.metric{border:1px solid #e4ebf5;padding:16px;border-radius:10px;background:white}.metric strong{font-size:30px;display:block;color:#17243d}.metric.danger strong{color:#cc4958}.metric span,.metric small{display:block;color:#72829c}.metric small{margin-top:7px;font-size:12px}.panel-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.panel-head span{color:#71809a;font-size:13px}.thumb{width:72px;height:54px;object-fit:cover;border-radius:7px;background:#edf2f8}.clickable{cursor:zoom-in}.sample-cell{display:flex;align-items:center;gap:10px}.sample-cell span{max-width:130px;overflow:hidden;text-overflow:ellipsis}.ok{color:#168353}.blocked{color:#bb7b1a}.detail{display:grid;grid-template-columns:1.25fr 1fr;gap:22px}.image-stage-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}.image-stage-head span{font-size:12px;color:#71809a}.audit-image{position:relative;background:#0f1b30;line-height:0}.audit-image img{width:100%;max-height:560px;object-fit:contain;background:#0f1b30}.audit-box{position:absolute;box-sizing:border-box;border:3px solid #f59e0b;background:transparent!important;color:transparent!important;font-size:0!important;line-height:0!important;min-width:18px;min-height:18px;pointer-events:auto}.audit-box.l1{border-color:#f59e0b}.audit-box.l2{border-color:#22c55e}.audit-box.vlm{border-color:#3b82f6}.audit-box.human{border-color:#a855f7}.box-legend{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:9px 0;color:#53637c;font-size:12px}.box-legend i{font-style:normal;color:#a1adbf}.legend-dot{display:inline-block;width:10px;height:10px;border:2px solid;border-radius:2px;background:transparent}.legend-dot.l1{border-color:#f59e0b}.legend-dot.l2{border-color:#22c55e}.legend-dot.vlm{border-color:#3b82f6}.legend-dot.human{border-color:#a855f7}.box-note{color:#71809a;font-size:12px}.detail p{line-height:1.7;word-break:break-word;margin:4px 0}.lifecycle-stages{margin-top:12px;padding:14px;background:#f7f9fc;border-radius:8px}.stage-card{appearance:none;width:100%;position:relative;margin-top:9px;padding:9px 10px 9px 15px;border:0;border-left:3px solid #94a3b8;background:#fff;border-radius:6px;text-align:left;cursor:pointer}.stage-card:hover,.stage-card.selected{background:#eef6ff;box-shadow:0 0 0 1px #bfdbfe inset}.stage-card::before{content:'';position:absolute;left:-7px;top:15px;width:10px;height:10px;border-radius:50%;background:#94a3b8}.stage-card.done{border-color:#22a06b}.stage-card.done::before{background:#22a06b}.stage-card.waiting{border-color:#e2a126}.stage-card.waiting::before{background:#e2a126}.stage-card.blocked{border-color:#d94f5d}.stage-card.blocked::before{background:#d94f5d}.stage-card strong,.stage-card span,.stage-card small{display:block}.stage-card span{color:#334155;font-size:13px;line-height:1.55;margin-top:2px}.stage-card small{color:#71809a;font-size:12px;line-height:1.5;margin-top:2px}.chain-detail{min-width:0}@media(max-width:1200px){.context{grid-template-columns:1fr 1fr}.metrics{grid-template-columns:1fr}.detail{grid-template-columns:1fr}}
+.page-head{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}.page-head h2{margin:3px 0 8px}.page-head p{margin:0;color:#71809a}.eyebrow{font-size:13px;color:#3277d8;font-weight:700}.context-card,.panel{margin-bottom:16px}.context{display:grid;grid-template-columns:1fr 1fr 1fr 1.7fr;gap:14px;align-items:end}.context label{display:grid;gap:6px;color:#667792;font-size:13px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}.metric{border:1px solid #e4ebf5;padding:16px;border-radius:10px;background:white}.metric strong{font-size:30px;display:block;color:#17243d}.metric.danger strong{color:#cc4958}.metric span,.metric small{display:block;color:#72829c}.metric small{margin-top:7px;font-size:12px}.panel-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.panel-head span{color:#71809a;font-size:13px}.thumb{width:72px;height:54px;object-fit:cover;border-radius:7px;background:#edf2f8}.clickable{cursor:zoom-in}.sample-cell{display:flex;align-items:center;gap:10px}.sample-cell span{max-width:130px;overflow:hidden;text-overflow:ellipsis}.ok{color:#168353}.blocked{color:#bb7b1a}.detail{display:grid;grid-template-columns:1.25fr 1fr;gap:22px}.image-stage-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}.image-stage-head span{font-size:12px;color:#71809a}.audit-image{position:relative;background:#0f1b30;line-height:0;width:100%;max-height:560px;overflow:auto}.audit-image img{display:block;width:100%;height:auto;background:#0f1b30}.audit-box{position:absolute;box-sizing:border-box;border:3px solid #f59e0b;background:transparent!important;color:transparent!important;font-size:0!important;line-height:0!important;min-width:18px;min-height:18px;pointer-events:auto}.audit-box.l1{border-color:#f59e0b}.audit-box.l2{border-color:#22c55e}.audit-box.vlm{border-color:#3b82f6}.audit-box.human{border-color:#a855f7}.box-legend{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:9px 0;color:#53637c;font-size:12px}.box-legend i{font-style:normal;color:#a1adbf}.legend-dot{display:inline-block;width:10px;height:10px;border:2px solid;border-radius:2px;background:transparent}.legend-dot.l1{border-color:#f59e0b}.legend-dot.l2{border-color:#22c55e}.legend-dot.vlm{border-color:#3b82f6}.legend-dot.human{border-color:#a855f7}.box-note{color:#71809a;font-size:12px}.consistency-warning{margin:0 0 12px;padding:10px 12px;border:1px solid #fecaca;background:#fff1f2;color:#b91c1c;border-radius:8px;font-weight:700;line-height:1.55}.detail p{line-height:1.7;word-break:break-word;margin:4px 0}.lifecycle-stages{margin-top:12px;padding:14px;background:#f7f9fc;border-radius:8px}.stage-card{appearance:none;width:100%;position:relative;margin-top:9px;padding:9px 10px 9px 15px;border:0;border-left:3px solid #94a3b8;background:#fff;border-radius:6px;text-align:left;cursor:pointer}.stage-card:hover,.stage-card.selected{background:#eef6ff;box-shadow:0 0 0 1px #bfdbfe inset}.stage-card::before{content:'';position:absolute;left:-7px;top:15px;width:10px;height:10px;border-radius:50%;background:#94a3b8}.stage-card.done{border-color:#22a06b}.stage-card.done::before{background:#22a06b}.stage-card.waiting{border-color:#e2a126}.stage-card.waiting::before{background:#e2a126}.stage-card.blocked{border-color:#d94f5d}.stage-card.blocked::before{background:#d94f5d}.stage-card strong,.stage-card span,.stage-card small{display:block}.stage-card span{color:#334155;font-size:13px;line-height:1.55;margin-top:2px}.stage-card small{color:#71809a;font-size:12px;line-height:1.5;margin-top:2px}.chain-detail{min-width:0}@media(max-width:1200px){.context{grid-template-columns:1fr 1fr}.metrics{grid-template-columns:1fr}.detail{grid-template-columns:1fr}}
 </style>

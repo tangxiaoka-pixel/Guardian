@@ -88,19 +88,17 @@
       </el-card>
     </template>
 
-    <el-dialog v-model="detailVisible" :title="`素材全链路详情 · ${selected?.sample_id || ''}`" width="1080px">
+    <el-dialog v-model="detailVisible" :title="`素材全链路详情 · ${selected?.sample_id || ''}`" width="1180px">
       <div v-if="selected" class="detail">
-        <div><div class="audit-image"><img :src="asset(selected.thumbnail_url)" @load="recordImageSize" @error="hideImage" /><template v-for="(item,index) in drawableBoxes(selected)" :key="index"><span :class="['audit-box', item.source]" :style="boxStyle(item.box)">{{ item.label }}</span></template></div><p class="box-note">{{ boxNote(selected) }}</p></div>
+        <div>
+          <div class="image-stage-head"><b>云端可查看图</b><span>完整 ROI · 已脱敏</span></div>
+          <div class="audit-image"><img :src="asset(selected.thumbnail_url)" @load="recordImageSize" @error="hideImage" /><template v-for="(item,index) in drawableBoxes(selected)" :key="index"><span :class="['audit-box', item.source]" :style="boxStyle(item.box)" :aria-label="item.label" :title="item.label"></span></template></div>
+          <div v-if="drawableBoxes(selected).length" class="box-legend"><span v-for="item in boxLegend(selected)" :key="item.source" :class="['legend-dot', item.source]"></span><template v-for="(item, index) in boxLegend(selected)" :key="`${item.source}-label`"><span>{{ item.label }}</span><i v-if="index < boxLegend(selected).length - 1">·</i></template></div>
+          <p class="box-note">{{ boxNote(selected) }}</p>
+        </div>
         <div class="chain-detail">
-          <p><b>素材 ID：</b>{{ selected.sample_id }}</p><p><b>场景：</b>{{ selected.scenario }}</p><p><b>来源：</b>{{ selected.source_note || sourceLabel(selected) }}</p><p><b>隐私状态：</b>{{ privacyLabel(selected) }}</p>
-          <div class="timeline"><b>完整处理链路</b><ol>
-            <li><strong>① 现场采集</strong><span>{{ formatTime(selected.created_at) }} · {{ sourceLabel(selected) }}</span></li>
-            <li><strong>② 本地脱敏与授权校验</strong><span>{{ privacyLabel(selected) }} · {{ selected.privacy_method || '未上报处理方法' }}</span></li>
-            <li><strong>③ Forge VLM 审计</strong><span>{{ stageLabel(selected) }} · {{ auditModel(selected) }} · {{ formatTime(auditTime(selected)) }}</span><span>结论：{{ decisionLabel(selected.sample_judgement?.vlm?.suggested_category || selected.sample_judgement?.vlm?.status) }} {{ score(selected) }}</span><span>{{ selected.sample_judgement?.vlm?.reason || '等待自动审计' }}</span></li>
-            <li><strong>④ 标注草稿</strong><span>{{ labelDraftLabel(selected) }}</span></li>
-            <li><strong>⑤ 人工审核</strong><span>{{ humanLabel(selected) }}{{ selected.sample_judgement?.human?.reviewed_at ? ` · ${formatTime(selected.sample_judgement.human.reviewed_at)}` : '' }}</span></li>
-            <li><strong>⑥ 训练准入</strong><span>{{ selected.training_eligibility === 'eligible' ? '已可加入训练数据集' : `暂不可训练：${selected.blocked_reasons?.join('、') || '等待审核完成'}` }}</span></li>
-          </ol></div>
+          <p><b>素材 ID：</b>{{ selected.sample_id }}</p><p><b>场景：</b>{{ selected.scenario }}</p>
+          <div class="lifecycle-stages"><b>完整处理链路</b><div v-for="stageItem in lifecycleStages(selected)" :key="stageItem.key" class="stage-card" :class="stageItem.state"><strong>{{ stageItem.index }} {{ stageItem.title }}</strong><span>{{ stageItem.summary }}</span><small v-if="stageItem.detail">{{ stageItem.detail }}</small></div></div>
         </div>
       </div>
     </el-dialog>
@@ -170,14 +168,17 @@ function needsHuman(r:any){
 function stageLabel(r:any){ const v=r.sample_judgement?.vlm?.status || r.vlm_status; const h=r.sample_judgement?.human?.status; if(h === 'human_reviewed') return '人工审核完成'; if(needsHuman(r)) return '等待人工审核'; if(['positive','negative','completed','suspected_hazard','no_hazard'].includes(v)) return 'VLM 审计完成'; return '已入库，待 VLM' }
 function stageType(r:any){ const s=stageLabel(r); return s.includes('完成') ? 'success' : s.includes('等待人工') ? 'warning' : 'info' }
 function drawableBoxes(row:any){
-  const vlmBoxes=row.vlm_boxes || row.sample_judgement?.vlm?.boxes || row.sample_judgement?.vlm?.bbox_norm || row.label_bbox_norm || []
-  const values=Array.isArray(vlmBoxes) && vlmBoxes.length>=4 ? (Array.isArray(vlmBoxes[0]) ? vlmBoxes : [vlmBoxes]) : []
   const width=selectedImageSize.value.width, height=selectedImageSize.value.height
-  const realVlm=values.map((box:any)=>normaliseBox(box,width,height)).filter(Boolean).map((box:any)=>({box,label:'VLM 审计',source:'vlm'}))
-  if(realVlm.length) return realVlm
-  const edgeBox=row.raw_bbox || row.bbox || row.sample_judgement?.l2?.bbox || row.sample_judgement?.l1?.bbox || []
-  const candidate=normaliseBox(edgeBox,width,height)
-  return candidate ? [{box:candidate,label:'边缘检测候选',source:'candidate'}] : []
+  const stageBoxes=(raw:any,label:string,source:string)=>asBoxes(raw).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean).map((box:any)=>({box,label,source}))
+  const l1=stageBoxes(row.sample_judgement?.l1?.bbox || row.l1_bbox,'L1 检测框','l1')
+  const l2=stageBoxes(row.sample_judgement?.l2?.bbox || row.l2_bbox,'L2 检测框','l2')
+  const vlm=stageBoxes(row.vlm_boxes || row.sample_judgement?.vlm?.boxes || row.sample_judgement?.vlm?.bbox_norm || row.label_bbox_norm,'VLM 审计框','vlm')
+  const human=stageBoxes(row.sample_judgement?.human?.bbox || row.human_bbox || row.human_label_bbox_norm,'人工确认框','human')
+  return [...l1,...l2,...vlm,...human]
+}
+function asBoxes(raw:any){
+  if(!Array.isArray(raw) || raw.length<4) return []
+  return Array.isArray(raw[0]) ? raw : [raw]
 }
 function normaliseBox(raw:any,width:number,height:number){
   if(!Array.isArray(raw) || raw.length<4) return null
@@ -187,9 +188,13 @@ function normaliseBox(raw:any,width:number,height:number){
   if(!width || !height) return null
   return [x1/width,y1/height,x2/width,y2/height]
 }
-function boxNote(row:any){ const boxes=drawableBoxes(row); if(!boxes.length) return '本次 VLM 未返回可绘制目标框。'; return boxes.some((item:any)=>item.source==='vlm') ? '橙框为 VLM 返回的目标定位框。' : '虚线框为边缘检测候选框；本次 VLM 只给出结论，没有返回定位坐标。' }
+function boxLegend(row:any){
+  const labels:any={l1:'L1 检测框',l2:'L2 检测框',vlm:'VLM 审计框',human:'人工确认框'}
+  return [...new Set(drawableBoxes(row).map((item:any)=>item.source))].map((source:any)=>({source,label:labels[source] || source}))
+}
+function boxNote(row:any){ const boxes=drawableBoxes(row); if(!boxes.length) return '当前素材未上报可绘制定位框；这不等同于没有产生对应阶段，只表示该阶段没有返回坐标。'; return '框内不填充颜色、不显示文字，以便直接查看桌面与目标。图例仅说明每种边框来源。' }
 function boxStyle(box:any){ const [x1,y1,x2,y2]=box.map(Number); if(![x1,y1,x2,y2].every(Number.isFinite)) return {}; return {left:`${Math.max(0,x1)*100}%`,top:`${Math.max(0,y1)*100}%`,width:`${Math.max(0,x2-x1)*100}%`,height:`${Math.max(0,y2-y1)*100}%`} }
-function sourceLabel(r:any){ if(r.source_type === 'guardian_forge_historical') return '历史隔离'; if(r.collection_type === 'periodic_miss_guard') return '防漏检定期抽帧'; if(r.collection_type === 'l2_alarm_frame') return 'L2 告警关键帧'; return 'KKOS 事件采集' }
+function sourceLabel(r:any){ if(r.source_type === 'guardian_forge_historical') return '历史隔离'; if(['periodic_miss_guard','periodic_scan','miss_guard'].includes(r.collection_type)) return '防漏检定期抽帧'; if(['l2_alarm_frame','alarm','confirmed_alarm'].includes(r.collection_type)) return '现场报警关键帧'; if(String(r.disagreement_type || '').includes('disagree')) return 'L1/L2 判断不一致'; return 'KKOS 事件采集' }
 function privacyLabel(r:any){ return r.privacy_status === 'privacy_processed' ? '完整 ROI · 本地脱敏 · 已授权' : r.privacy_status === 'legacy_provenance_unknown' ? '历史来源不可验证（已隔离）' : r.privacy_status || '待处理' }
 function flowLabel(r:any){ if(r.source_type === 'guardian_forge_historical') return '隔离：不可进入闭环'; const v=r.sample_judgement?.vlm?.status || r.vlm_status; const h=r.sample_judgement?.human?.status; return h === 'human_reviewed' ? '人工已确认' : needsHuman(r) ? '等待人工审核' : ['positive','negative','completed','suspected_hazard','no_hazard'].includes(v) ? 'VLM 已生成草稿' : '等待 VLM 自动审计' }
 function decisionLabel(v:string){ return ({positive:'饮品容器',suspected_hazard:'饮品容器',negative:'非饮品容器',no_hazard:'未见饮品容器',uncertain:'不确定',pending:'等待审计',not_run:'等待审计',failed:'审计失败'} as any)[v] || v }
@@ -197,10 +202,39 @@ function decisionType(v:string){ return v==='positive'?'success':v==='negative'?
 function score(r:any){ const n=Number(r.sample_judgement?.vlm?.confidence || r.confidence || 0); return n ? `${Math.round(n*100)}%` : '-' }
 function humanLabel(r:any){ return r.sample_judgement?.human?.status === 'human_reviewed' ? '已确认' : '待审核' }
 function labelDraftLabel(r:any){ const status=r.label_status || r.forge_label_status || ''; if(status === 'auto_labeled' || status === 'auto_label_draft') return 'VLM 已生成标注草稿'; if(['need_review','need_human_review','need_human_box'].includes(status)) return '等待人工确认标注'; return '等待 VLM 结果' }
+function edgeStageSummary(stage:any, label:string){
+  if(!stage || ['not_reported','not_run','pending',''].includes(stage.status)) return `${label} 未上报或未执行`
+  const classes=Array.isArray(stage.classes) && stage.classes.length ? stage.classes.join('、') : '未返回类别'
+  const confidence=Number(stage.confidence || 0)
+  return `${stage.status === 'hit' ? '命中' : stage.status} · ${classes}${confidence ? ` · ${Math.round(confidence * 100)}%` : ''}`
+}
+function collectionReason(row:any){
+  if(['l2_alarm_frame','alarm','confirmed_alarm'].includes(row.collection_type)) return '报警：现场 L2 已确认风险后上报关键帧'
+  if(String(row.disagreement_type || '').includes('disagree')) return 'L1 和 L2 判断不一致：用于回溯模型差异'
+  if(['periodic_miss_guard','periodic_scan','miss_guard'].includes(row.collection_type)) return '漏报抽帧：定期兜底采样，防止静态目标漏检'
+  return row.source_note || '现场事件采集：KKOS 在画面变化或规则命中后上报'
+}
+function lifecycleStages(row:any){
+  const l1=row.sample_judgement?.l1 || {}
+  const l2=row.sample_judgement?.l2 || {}
+  const vlm=row.sample_judgement?.vlm || {}
+  const human=row.sample_judgement?.human || {}
+  const trainingEligible=row.training_eligibility === 'eligible'
+  const vlmDecision=decisionLabel(vlm.suggested_category || vlm.status || 'pending')
+  return [
+    {key:'raw',index:'①',title:'原图与上报原因',state:'done',summary:`${formatTime(row.created_at)} · ${sourceLabel(row)}`,detail:`上报原因：${collectionReason(row)}。原始未脱敏图仅保留在现场 KKOS，云端不保存。`},
+    {key:'l1',index:'②',title:'L1 标记',state:l1.status === 'hit' ? 'done' : 'waiting',summary:edgeStageSummary(l1,'L1'),detail:asBoxes(l1.bbox).length ? `已返回 ${asBoxes(l1.bbox).length} 个 L1 框（见图例）。` : '无 L1 坐标可绘制。'},
+    {key:'l2',index:'③',title:'L2 标记',state:l2.status === 'hit' || l2.status === 'confirmed' ? 'done' : 'waiting',summary:edgeStageSummary(l2,'L2'),detail:asBoxes(l2.bbox).length ? `已返回 ${asBoxes(l2.bbox).length} 个 L2 框（见图例）。` : '无 L2 坐标可绘制。'},
+    {key:'privacy',index:'④',title:'本地脱敏内容',state:row.privacy_status === 'privacy_processed' ? 'done' : 'blocked',summary:privacyLabel(row),detail:row.privacy_actions?.length ? `处理动作：${row.privacy_actions.join('、')}` : `处理方法：${row.privacy_method || '未上报'}`},
+    {key:'vlm',index:'⑤',title:'VLM 审计标注',state:['pending','not_run'].includes(vlm.status) ? 'waiting' : 'done',summary:`${auditModel(row)} · ${vlmDecision}${vlm.confidence ? ` · ${Math.round(Number(vlm.confidence)*100)}%` : ''}`,detail:vlm.reason || '等待自动审计结果。'},
+    {key:'human',index:'⑥',title:'人工确认 / 标注',state:human.status === 'human_reviewed' ? 'done' : 'waiting',summary:human.status === 'human_reviewed' ? `已确认${human.reviewed_at ? ` · ${formatTime(human.reviewed_at)}` : ''}` : '未人工确认',detail:human.comment || (needsHuman(row) ? '此素材需要人工确认最终类别或目标框。' : '当前自动标注可继续等待人工抽检。')},
+    {key:'training',index:'⑦',title:'训练准入与最终标签',state:trainingEligible ? 'done' : 'waiting',summary:trainingEligible ? '可进入训练数据集' : '暂不可进入训练',detail:trainingEligible ? `最终标签：${row.sample_category || vlmDecision}；准入原因：隐私、授权与标注条件已满足。` : `阻塞原因：${row.blocked_reasons?.join('、') || '等待 VLM 或人工审核完成'}`},
+  ]
+}
 watch(() => route.path, refresh)
 onMounted(refresh)
 </script>
 
 <style scoped>
-.page-head{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}.page-head h2{margin:3px 0 8px}.page-head p{margin:0;color:#71809a}.eyebrow{font-size:13px;color:#3277d8;font-weight:700}.context-card,.panel{margin-bottom:16px}.context{display:grid;grid-template-columns:1fr 1fr 1fr 1.7fr;gap:14px;align-items:end}.context label{display:grid;gap:6px;color:#667792;font-size:13px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}.metric{border:1px solid #e4ebf5;padding:16px;border-radius:10px;background:white}.metric strong{font-size:30px;display:block;color:#17243d}.metric.danger strong{color:#cc4958}.metric span,.metric small{display:block;color:#72829c}.metric small{margin-top:7px;font-size:12px}.panel-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.panel-head span{color:#71809a;font-size:13px}.thumb{width:72px;height:54px;object-fit:cover;border-radius:7px;background:#edf2f8}.clickable{cursor:zoom-in}.sample-cell{display:flex;align-items:center;gap:10px}.sample-cell span{max-width:130px;overflow:hidden;text-overflow:ellipsis}.ok{color:#168353}.blocked{color:#bb7b1a}.detail{display:grid;grid-template-columns:1.25fr 1fr;gap:22px}.audit-image{position:relative;background:#0f1b30;line-height:0}.audit-image img{width:100%;max-height:560px;object-fit:contain;background:#0f1b30}.audit-box{position:absolute;border:3px solid #f59e0b;color:#fff;background:#b45309cc;font-size:12px;line-height:16px;min-width:18px;min-height:18px}.audit-box.candidate{border-style:dashed;background:#64748bcc}.box-note{color:#71809a;font-size:12px}.detail p{line-height:1.7;word-break:break-word}.timeline{margin-top:14px;padding:14px;background:#f7f9fc;border-radius:8px}.timeline ol{margin:10px 0 0;padding-left:20px;line-height:1.8}.timeline li{padding:6px 0}.timeline li strong,.timeline li span{display:block}.timeline li span{color:#64748b;font-size:13px;line-height:1.55}.chain-detail{min-width:0}@media(max-width:1200px){.context{grid-template-columns:1fr 1fr}.metrics{grid-template-columns:1fr}.detail{grid-template-columns:1fr}}
+.page-head{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}.page-head h2{margin:3px 0 8px}.page-head p{margin:0;color:#71809a}.eyebrow{font-size:13px;color:#3277d8;font-weight:700}.context-card,.panel{margin-bottom:16px}.context{display:grid;grid-template-columns:1fr 1fr 1fr 1.7fr;gap:14px;align-items:end}.context label{display:grid;gap:6px;color:#667792;font-size:13px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}.metric{border:1px solid #e4ebf5;padding:16px;border-radius:10px;background:white}.metric strong{font-size:30px;display:block;color:#17243d}.metric.danger strong{color:#cc4958}.metric span,.metric small{display:block;color:#72829c}.metric small{margin-top:7px;font-size:12px}.panel-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.panel-head span{color:#71809a;font-size:13px}.thumb{width:72px;height:54px;object-fit:cover;border-radius:7px;background:#edf2f8}.clickable{cursor:zoom-in}.sample-cell{display:flex;align-items:center;gap:10px}.sample-cell span{max-width:130px;overflow:hidden;text-overflow:ellipsis}.ok{color:#168353}.blocked{color:#bb7b1a}.detail{display:grid;grid-template-columns:1.25fr 1fr;gap:22px}.image-stage-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}.image-stage-head span{font-size:12px;color:#71809a}.audit-image{position:relative;background:#0f1b30;line-height:0}.audit-image img{width:100%;max-height:560px;object-fit:contain;background:#0f1b30}.audit-box{position:absolute;box-sizing:border-box;border:3px solid #f59e0b;background:transparent!important;color:transparent!important;font-size:0!important;line-height:0!important;min-width:18px;min-height:18px;pointer-events:auto}.audit-box.l1{border-color:#f59e0b}.audit-box.l2{border-color:#22c55e}.audit-box.vlm{border-color:#3b82f6}.audit-box.human{border-color:#a855f7}.box-legend{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:9px 0;color:#53637c;font-size:12px}.box-legend i{font-style:normal;color:#a1adbf}.legend-dot{display:inline-block;width:10px;height:10px;border:2px solid;border-radius:2px;background:transparent}.legend-dot.l1{border-color:#f59e0b}.legend-dot.l2{border-color:#22c55e}.legend-dot.vlm{border-color:#3b82f6}.legend-dot.human{border-color:#a855f7}.box-note{color:#71809a;font-size:12px}.detail p{line-height:1.7;word-break:break-word;margin:4px 0}.lifecycle-stages{margin-top:12px;padding:14px;background:#f7f9fc;border-radius:8px}.stage-card{position:relative;margin-top:9px;padding:9px 10px 9px 15px;border-left:3px solid #94a3b8;background:#fff;border-radius:6px}.stage-card::before{content:'';position:absolute;left:-7px;top:15px;width:10px;height:10px;border-radius:50%;background:#94a3b8}.stage-card.done{border-color:#22a06b}.stage-card.done::before{background:#22a06b}.stage-card.waiting{border-color:#e2a126}.stage-card.waiting::before{background:#e2a126}.stage-card.blocked{border-color:#d94f5d}.stage-card.blocked::before{background:#d94f5d}.stage-card strong,.stage-card span,.stage-card small{display:block}.stage-card span{color:#334155;font-size:13px;line-height:1.55;margin-top:2px}.stage-card small{color:#71809a;font-size:12px;line-height:1.5;margin-top:2px}.chain-detail{min-width:0}@media(max-width:1200px){.context{grid-template-columns:1fr 1fr}.metrics{grid-template-columns:1fr}.detail{grid-template-columns:1fr}}
 </style>

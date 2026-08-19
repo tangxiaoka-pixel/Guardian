@@ -1259,6 +1259,18 @@ function ingestForgeSample(body = {}) {
     vlm_status: verdict === 'positive' ? 'suspected_hazard' : verdict === 'negative' ? 'no_hazard' : 'uncertain',
     suggested_category: verdict,
     suggested_labels: suggestedClass && !['none', 'uncertain'].includes(suggestedClass) ? [suggestedClass] : [],
+    // Keep edge evidence separate from the VLM output.  The Forge detail
+    // page renders these as distinct L1/L2/VLM layers for one material.
+    l1_status: raw.l1?.status || raw.l1_status || existing?.l1_status || '',
+    l1_classes: raw.l1?.classes || raw.l1_classes || existing?.l1_classes || [],
+    l1_confidence: Number(raw.l1?.confidence ?? raw.l1_confidence ?? existing?.l1_confidence ?? 0),
+    l1_bbox: raw.l1?.bbox || raw.l1_bbox || existing?.l1_bbox || [],
+    l1_model_version: raw.l1?.model_version || raw.l1_model_version || existing?.l1_model_version || '',
+    l2_status: raw.l2?.status || raw.l2_status || existing?.l2_status || '',
+    l2_classes: raw.l2?.classes || raw.l2_classes || existing?.l2_classes || [],
+    l2_confidence: Number(raw.l2?.confidence ?? raw.l2_confidence ?? existing?.l2_confidence ?? 0),
+    l2_bbox: raw.l2?.bbox || raw.l2_bbox || existing?.l2_bbox || [],
+    l2_model_version: raw.l2?.model_version || raw.l2_model_version || existing?.l2_model_version || '',
     bbox,
     label_bbox_norm: bbox,
     vlm: {
@@ -1976,6 +1988,14 @@ function forgeMaterialRows() {
     const sourceSiteId = sample.siteId || sample.site_id || ''
     const sourcePrivacy = sample.privacyStatus || sample.privacy_status || ''
     const sourceConsent = sample.consentStatus || sample.consent_status || ''
+    // Forge records may be created by a regular event, an L2 alarm, a
+    // periodic missed-event guard, or a disagreement sampler.  Preserve
+    // upstream L1/L2 evidence independently: a VLM bbox must never be
+    // presented as an edge-model bbox in the training UI.
+    const l1Evidence = sample.l1 || sample.l1_result || {}
+    const l2Evidence = sample.l2 || sample.l2_result || {}
+    const l1Boxes = l1Evidence.bbox || l1Evidence.boxes || sample.l1_bbox || sample.l1_boxes || []
+    const l2Boxes = l2Evidence.bbox || l2Evidence.boxes || sample.l2_bbox || sample.l2_boxes || []
     const rawVlmBoxes = sample.vlm?.boxes || sample.vlm?.bbox_norm || sample.vlm?.bbox_xyxy_norm || sample.vlm?.bbox || sample.label_bbox_norm || []
     const vlmAuditedAt = sample.vlm?.completed_at || sample.vlm?.audited_at || sample.vlm?.at || sample.updated_at || sample.uploadedAt || sample.created_at || ''
     const exact = candidates.find((binding) => (
@@ -2012,8 +2032,21 @@ function forgeMaterialRows() {
     const createdRaw = sample.created_at || sample.uploaded_at || sample.received_at || businessNow()
     const createdAt = normalizeLogTime(createdRaw)
     const judgement = {
-      l1: { status: 'not_reported', classes: [], confidence: 0, bbox: [], model_version: '' },
-      l2: { status: 'not_reported', classes: [], confidence: 0, bbox: [], model_version: '', reason: '' },
+      l1: {
+        status: l1Evidence.status || sample.l1_status || (Array.isArray(l1Boxes) && l1Boxes.length ? 'hit' : 'not_reported'),
+        classes: l1Evidence.classes || l1Evidence.class_names || sample.l1_classes || [],
+        confidence: Number(l1Evidence.confidence ?? l1Evidence.score ?? sample.l1_confidence ?? 0),
+        bbox: Array.isArray(l1Boxes) ? l1Boxes : [],
+        model_version: l1Evidence.model_version || sample.l1_model_version || '',
+      },
+      l2: {
+        status: l2Evidence.status || sample.l2_status || (Array.isArray(l2Boxes) && l2Boxes.length ? 'hit' : 'not_reported'),
+        classes: l2Evidence.classes || l2Evidence.class_names || sample.l2_classes || [],
+        confidence: Number(l2Evidence.confidence ?? l2Evidence.score ?? sample.l2_confidence ?? 0),
+        bbox: Array.isArray(l2Boxes) ? l2Boxes : [],
+        model_version: l2Evidence.model_version || sample.l2_model_version || '',
+        reason: l2Evidence.reason || sample.l2_reason || '',
+      },
       vlm: {
         status: vlmStatus,
         // 统一展示和回填为 Forge 当前正式的审计模型，避免历史 POC 字段
@@ -2044,7 +2077,7 @@ function forgeMaterialRows() {
       scenario,
       source_event_id: sample.traceId || sample.trace_id || sample.trigger_id || sample.edge_event_id || sample.l1_event_id || '',
       source_type: legacy ? 'guardian_forge_historical' : 'guardian_forge_live',
-      source_note: legacy ? '历史 Forge 裁剪素材：不符合当前“完整 ROI + 本地脱敏”标准，已隔离，禁止 VLM、人工审核和训练。' : '现场新采集：完整桌面 ROI 已在 KKOS 本地脱敏，自动 VLM 审计后等待人工复核。',
+      source_note: legacy ? '历史 Forge 裁剪素材：不符合当前“完整 ROI + 本地脱敏”标准，已隔离，禁止 VLM、人工审核和训练。' : (sample.source_note || sample.sourceNote || '现场新采集：完整桌面 ROI 已在 KKOS 本地脱敏，自动 VLM 审计后等待人工复核。'),
       collection_type: sample.sampleType || sample.sample_type || '',
       sample_category: category,
       sample_type: sample.sample_type || category,
@@ -2064,6 +2097,8 @@ function forgeMaterialRows() {
       thumbnail_url: forgeSamplePreviewUrl(sample, 'raw'),
       frame_path: sample.image_path || '',
       raw_bbox: Array.isArray(sample.bbox) ? sample.bbox : [],
+      l1_bbox: Array.isArray(l1Boxes) ? l1Boxes : [],
+      l2_bbox: Array.isArray(l2Boxes) ? l2Boxes : [],
       vlm_boxes: Array.isArray(rawVlmBoxes) ? rawVlmBoxes : [],
       vlm_audited_at: vlmAuditedAt,
       vlm_raw: sample.vlm || {},

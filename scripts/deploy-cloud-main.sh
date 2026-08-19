@@ -12,24 +12,24 @@ fi
 
 git pull --ff-only origin main
 
-ssh "$cloud_host" "
-  set -euo pipefail
-  git config --global --add safe.directory '$cloud_dir'
-  cd '$cloud_dir'
-  if [ ! -d .git ]; then
-    git init
-  fi
-  if ! git remote get-url origin >/dev/null 2>&1; then
-    git remote add origin git@github.com:tangxiaoka-pixel/Guardian.git
-  fi
-  export GIT_SSH_COMMAND='ssh -i /root/.ssh/guardian_github_deploy -o IdentitiesOnly=yes'
-  git fetch origin main
-  git checkout -B main origin/main
-  npm ci
-  npm run build
-  rsync -rc --delete --exclude='.DS_Store' dist/ '$web_dir/'
-  systemctl restart guardian-cloud-api.service
-  systemctl is-active guardian-cloud-api.service
-"
+ssh "$cloud_host" "CLOUD_DIR='$cloud_dir' WEB_DIR='$web_dir' bash -s" <<'REMOTE'
+set -euo pipefail
+git config --global --add safe.directory "$CLOUD_DIR"
+cd "$CLOUD_DIR"
+if [ ! -d .git ]; then
+  git init
+fi
+if ! git remote get-url origin >/dev/null 2>&1; then
+  git remote add origin git@github.com:tangxiaoka-pixel/Guardian.git
+fi
+export GIT_SSH_COMMAND='ssh -i /root/.ssh/guardian_github_deploy -o IdentitiesOnly=yes'
+git fetch origin main
+git checkout -B main origin/main
+npm ci
+npm run build
+rsync -rc --delete --exclude='.DS_Store' dist/ "$WEB_DIR/"
+systemctl restart guardian-cloud-api.service
+systemctl is-active guardian-cloud-api.service
+REMOTE
 
 echo "腾讯云已从 GitHub main 完成部署。"

@@ -244,7 +244,7 @@ function boxLegendForItems(items:any[]){
 }
 function boxNote(_row:any, stageKey='raw'){ const boxes=activeDrawableBoxes.value; if(!boxes.length) return stageKey === 'raw' || stageKey === 'privacy' ? '此步骤展示完整 ROI 脱敏图，不叠加目标框。' : '当前步骤未返回可绘制定位框；这不等同于没有产生该阶段，只表示该阶段没有返回坐标。'; return '框内不填充颜色、不显示文字，以便直接查看桌面与目标。图例仅说明当前步骤的边框来源。' }
 function boxStyle(box:any){ const [x1,y1,x2,y2]=box.map(Number); if(![x1,y1,x2,y2].every(Number.isFinite)) return {}; return {left:`${Math.max(0,x1)*100}%`,top:`${Math.max(0,y1)*100}%`,width:`${Math.max(0,x2-x1)*100}%`,height:`${Math.max(0,y2-y1)*100}%`} }
-function sourceLabel(r:any){ if(r.source_type === 'guardian_forge_historical') return '历史隔离'; const kind=collectionKind(r); if(kind==='periodic') return '防漏报定期抽帧'; if(kind==='l2') return 'L2 命中上报'; if(kind==='l1') return 'L1 命中上报'; if(kind==='disagree') return 'L1/L2 判断不一致'; return 'KKOS 事件采集' }
+function sourceLabel(r:any){ if(r.source_type === 'guardian_forge_historical') return '历史隔离'; const kind=collectionKind(r); if(kind==='periodic') return '防漏报定期抽帧'; if(kind==='l2') return 'L2 命中上报'; if(kind==='l1') return 'L1 命中上报'; if(kind==='disagree') return 'L1/L2 判断不一致'; if(kind==='inconsistent') return '来源字段异常'; return 'KKOS 事件采集' }
 function privacyLabel(r:any){ return r.privacy_status === 'privacy_processed' ? '完整 ROI · 本地脱敏 · 已授权' : r.privacy_status === 'legacy_provenance_unknown' ? '历史来源不可验证（已隔离）' : r.privacy_status || '待处理' }
 function flowLabel(r:any){ if(r.source_type === 'guardian_forge_historical') return '隔离：不可进入闭环'; const v=r.sample_judgement?.vlm?.status || r.vlm_status; const h=r.sample_judgement?.human?.status; return h === 'human_reviewed' ? '人工已确认' : needsHuman(r) ? '等待人工审核' : ['positive','negative','completed','suspected_hazard','no_hazard'].includes(v) ? 'VLM 已生成草稿' : '等待 VLM 自动审计' }
 function decisionLabel(v:string){ return ({positive:'饮品容器',suspected_hazard:'饮品容器',negative:'非饮品容器',no_hazard:'未见饮品容器',uncertain:'不确定',pending:'等待审计',not_run:'等待审计',failed:'审计失败'} as any)[v] || v }
@@ -259,22 +259,32 @@ function edgeStageSummary(stage:any, label:string){
   return `${stage.status === 'hit' ? '命中' : stage.status} · ${classes}${confidence ? ` · ${Math.round(confidence * 100)}%` : ''}`
 }
 function isEdgeStageReported(stage:any){ return Boolean(stage && !['not_reported','not_run','pending',''].includes(String(stage.status || ''))) }
+function hasEdgeBox(stage:any){
+  return asBoxes(stage?.bbox || stage?.boxes || []).length > 0
+}
+function hasStageEvidence(stage:any){
+  return isEdgeStageReported(stage) || hasEdgeBox(stage)
+}
 function collectionKind(row:any){
-  const type=String(row.collection_type || row.sample_type || '').toLowerCase()
+  const type=String(row.collection_type || row.collectionType || '').toLowerCase()
   const note=String(row.source_note || row.reason || '').toLowerCase()
   const l1=row.sample_judgement?.l1 || {}
   const l2=row.sample_judgement?.l2 || {}
   if(row.source_type === 'guardian_forge_historical') return 'legacy'
-  if(['l2_alarm_frame','alarm','confirmed_alarm'].includes(type) || note.includes('l2 已确认') || note.includes('报警')) return 'l2'
+  const saysL2=['l2_alarm_frame','alarm','confirmed_alarm'].includes(type) || note.includes('l2 已确认') || note.includes('l2 命中')
+  const saysL1=type.includes('l1') || note.includes('l1 命中')
+  if(saysL2 && !hasStageEvidence(l2)) return 'inconsistent'
+  if(saysL1 && !hasStageEvidence(l1)) return 'inconsistent'
+  if(saysL2 || hasStageEvidence(l2)) return 'l2'
   if(type.includes('disagree') || String(row.disagreement_type || '').includes('disagree')) return 'disagree'
   if(['periodic_miss_guard','periodic_scan','miss_guard'].includes(type) || note.includes('防漏') || note.includes('定期') || note.includes('漏报') || note.includes('30 秒')) return 'periodic'
-  if(isEdgeStageReported(l2)) return 'l2'
-  if(isEdgeStageReported(l1) || type.includes('l1') || note.includes('l1')) return 'l1'
+  if(hasStageEvidence(l1)) return 'l1'
   return 'event'
 }
 function collectionReason(row:any){
   const kind=collectionKind(row)
   if(kind === 'legacy') return '历史隔离素材：来源或隐私链路不符合当前训练标准'
+  if(kind === 'inconsistent') return '来源字段异常：上报原因标记为 L1/L2 命中，但素材未携带对应模型结果或坐标框；需要人工确认，不能直接作为训练依据'
   if(kind === 'l2') return 'L2 命中上报：现场 L2 复核确认风险后进入 Forge 素材库'
   if(kind === 'l1') return 'L1 命中上报：L1 NPU 识别到候选目标后进入 Forge 素材库'
   if(kind === 'disagree') return 'L1/L2 判断不一致：用于回溯边缘模型差异与困难样本'
@@ -308,7 +318,7 @@ function edgeVlmWarning(row:any){
   const edgeHit=isHazardStage(l1) || isHazardStage(l2)
   const vlmHit=isHazardVlm(vlm)
   const vlmDone=!['pending','not_run','queued','running',''].includes(String(vlm.status || '').toLowerCase())
-  if(vlmDone && vlmHit && !edgeHit) return '注意：VLM 判断存在饮品容器，但当前素材没有 L1/L2 命中上报，疑似边缘漏检或防漏报抽帧样本，需要人工确认。'
+  if(vlmDone && vlmHit && !edgeHit) return '注意：VLM 判断存在饮品容器，但当前素材没有 L1/L2 命中框佐证；VLM 框只能作为草稿，不能直接作为训练框，必须人工确认/修框。'
   if(vlmDone && edgeHit && !vlmHit) return '注意：L1/L2 命中饮品容器，但 VLM 未确认，疑似误报或 VLM 漏判，需要人工确认。'
   const width=selectedImageSize.value.width, height=selectedImageSize.value.height
   const edgeRaw=(asBoxes(l2.bbox).length ? l2.bbox : l1.bbox) || []

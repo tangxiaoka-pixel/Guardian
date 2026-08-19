@@ -5,7 +5,7 @@ cloud_host="${GUARDIAN_CLOUD_HOST:-root@122.51.227.54}"
 cloud_dir="/root/Guardian/cloud/admin"
 web_dir="/var/www/guardian/admin"
 
-if [[ "$(git branch --show-current)" != "main" ]]; then
+if [[ "$(git symbolic-ref --quiet --short HEAD)" != "main" ]]; then
   echo "只能从本地 main 触发生产发布。" >&2
   exit 1
 fi

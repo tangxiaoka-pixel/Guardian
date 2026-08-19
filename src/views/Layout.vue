@@ -54,6 +54,13 @@ const platformMenuGroups = [
       { path: '/devices-logs', label: '平台日志' },
     ],
   },
+  {
+    label: 'Forge 训练中心',
+    children: [
+      { path: '/scenario-policies', label: '场景模板 / 冷启动' },
+      { path: '/model-registry', label: '模型仓库' },
+    ],
+  },
 ]
 const projectManagerMenuGroups = [
   {

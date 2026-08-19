@@ -253,9 +253,8 @@ const draftGroups = computed(() => {
 })
 const roiImageUrl = computed(() => {
   const camera = cameras.value.find((item) => item.camera_id === form.value?.camera_id)
-  if (camera?.rtsp_url) return `${apiPublicUrl(`/api/camera-snapshot?camera_id=${encodeURIComponent(camera.camera_id)}`)}&t=${Date.now()}`
-  const index = Math.max(1, Number(String(camera?.camera_id || '').replace(/\D/g, '')) || 1)
-  return `${apiPublicUrl(`/api/snapshots/test${Math.min(index, 3)}.jpg`)}?t=${Date.now()}`
+  if (!camera?.camera_id) return ''
+  return `${apiPublicUrl(`/api/camera-snapshot?camera_id=${encodeURIComponent(camera.camera_id)}`)}&t=${Date.now()}`
 })
 
 function cameraIndex(cameraId: string) {

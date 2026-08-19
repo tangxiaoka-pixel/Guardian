@@ -23,7 +23,6 @@ const routes = [
       { path: 'forge/human-review', component: () => import('../views/ForgeTrainingWorkspace.vue'), meta: { forgeStage: 'review' } },
       { path: 'forge/datasets', component: () => import('../views/ForgeTrainingWorkspace.vue'), meta: { forgeStage: 'datasets' } },
       { path: 'forge/release', component: () => import('../views/ForgeTrainingWorkspace.vue'), meta: { forgeStage: 'release' } },
-      { path: 'cap-validation', component: () => import('../views/CapValidation.vue') },
       { path: 'closed-loop-trace', component: () => import('../views/ClosedLoopTrace.vue') },
       { path: 'core-logs', component: () => import('../views/CoreLogs.vue') },
       { path: 'forge/centers', component: () => import('../views/ForgeAdmin.vue') },
@@ -68,7 +67,7 @@ router.beforeEach((to) => {
   const storedMode = localStorage.getItem('guardian_console_mode') || 'platform'
   const mode = storedMode === 'customer' || storedMode === 'project' || storedMode === 'project_manager' ? 'project_manager' : storedMode === 'project_operator' ? 'project_operator' : 'platform'
   if (storedMode === 'customer' || storedMode === 'project') localStorage.setItem('guardian_console_mode', 'project_manager')
-  const platformPaths = ['/dashboard', '/customer-center', '/audit', '/role-matrix', '/platform-edge-gateways', '/devices-logs', '/capacity-planner', '/scenario-policies', '/algorithm-details', '/forge', '/forge/materials', '/forge/vlm-audit', '/forge/human-review', '/forge/datasets', '/forge/release', '/model-registry', '/ai-lifecycle', '/closed-loop-trace', '/cap-validation']
+  const platformPaths = ['/dashboard', '/customer-center', '/audit', '/role-matrix', '/platform-edge-gateways', '/devices-logs', '/capacity-planner', '/scenario-policies', '/algorithm-details', '/forge', '/forge/materials', '/forge/vlm-audit', '/forge/human-review', '/forge/datasets', '/forge/release', '/model-registry', '/ai-lifecycle', '/closed-loop-trace']
   const projectManagerPaths = ['/customer-workspace', '/edge-gateways', '/streams', '/camera-bindings', '/runtime-configs', '/l1-monitor', '/l2-monitor', '/alarm-center', '/event-handling', '/device-status', '/project-settings', '/human-review', '/core-logs', '/ai-lifecycle', '/forge/materials', '/forge/vlm-audit', '/forge/human-review', '/forge/datasets', '/forge/release']
   const projectOperatorPaths = ['/customer-workspace', '/alarm-center', '/event-handling', '/device-status', '/core-logs']
   const projectPaths = Array.from(new Set([...projectManagerPaths, ...projectOperatorPaths]))

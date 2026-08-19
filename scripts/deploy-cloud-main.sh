@@ -18,6 +18,8 @@ ssh "$cloud_host" "
   cd '$cloud_dir'
   if [ ! -d .git ]; then
     git init
+  fi
+  if ! git remote get-url origin >/dev/null 2>&1; then
     git remote add origin git@github.com:tangxiaoka-pixel/Guardian.git
   fi
   export GIT_SSH_COMMAND='ssh -i /root/.ssh/guardian_github_deploy -o IdentitiesOnly=yes'

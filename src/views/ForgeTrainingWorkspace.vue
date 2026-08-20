@@ -214,13 +214,14 @@ function asBoxes(raw:any){
 function vlmBoxCandidates(row:any, vlm:any){
   const result:any[]=[]
   const pushBox=(box:any, format='')=>{
-    if(!Array.isArray(box) || box.length<4) return
-    result.push({ bbox: box.slice(0,4), bbox_format: format })
+    const normalizedFormat=String(format || '').toLowerCase()
+    if(!normalizedFormat || !Array.isArray(box) || box.length<4) return
+    result.push({ bbox: box.slice(0,4), bbox_format: normalizedFormat })
   }
   const pushObjectBoxes=(value:any, fallbackFormat='')=>{
     if(!Array.isArray(value)) return
     for(const item of value){
-      if(Array.isArray(item)) pushBox(item, fallbackFormat)
+      if(Array.isArray(item) && fallbackFormat) pushBox(item, fallbackFormat)
       else if(item && typeof item === 'object'){
         const box=item.bbox || item.box || item.bbox_norm || item.bbox_xyxy_norm || item.xyxy || item.xywh
         const format=String(item.bbox_format || item.format || item.coordinate_format || (item.xywh ? 'xywh' : item.xyxy ? 'xyxy' : item.bbox_xyxy_norm ? 'xyxy_norm' : item.bbox_norm ? 'xyxy_norm' : fallbackFormat)).toLowerCase()
@@ -235,14 +236,14 @@ function vlmBoxCandidates(row:any, vlm:any){
   pushObjectBoxes(row?.vlm_raw?.suggested_labels)
   pushObjectBoxes(row?.vlm_raw?.labels)
   pushObjectBoxes(row?.vlm_raw?.detections)
-  pushObjectBoxes(vlm?.boxes)
-  pushObjectBoxes(row?.vlm_raw?.boxes)
+  pushObjectBoxes(vlm?.boxes, String(vlm?.boxes_format || vlm?.bbox_format || '').toLowerCase())
+  pushObjectBoxes(row?.vlm_raw?.boxes, String(row?.vlm_raw?.boxes_format || row?.vlm_raw?.bbox_format || '').toLowerCase())
   pushBox(vlm?.bbox_xyxy_norm, 'xyxy_norm')
   pushBox(row?.vlm_raw?.bbox_xyxy_norm, 'xyxy_norm')
   pushBox(vlm?.bbox_norm, String(vlm?.bbox_format || vlm?.bbox_norm_format || 'xyxy_norm').toLowerCase())
   pushBox(row?.vlm_raw?.bbox_norm, String(row?.vlm_raw?.bbox_format || row?.vlm_raw?.bbox_norm_format || 'xyxy_norm').toLowerCase())
   pushBox(row?.label_bbox_norm, String(row?.label_bbox_format || 'xyxy_norm').toLowerCase())
-  pushObjectBoxes(row?.vlm_boxes)
+  pushObjectBoxes(row?.vlm_boxes, String(row?.vlm_bbox_format || '').toLowerCase())
   pushBox(row?.vlm_boxes, String(row?.vlm_bbox_format || '').toLowerCase())
   return result
 }
@@ -396,3 +397,4 @@ onMounted(refresh)
 <style scoped>
 .page-head{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}.page-head h2{margin:3px 0 8px}.page-head p{margin:0;color:#71809a}.eyebrow{font-size:13px;color:#3277d8;font-weight:700}.context-card,.panel{margin-bottom:16px}.context{display:grid;grid-template-columns:1fr 1fr 1fr 1.7fr;gap:14px;align-items:end}.context label{display:grid;gap:6px;color:#667792;font-size:13px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}.metric{border:1px solid #e4ebf5;padding:16px;border-radius:10px;background:white}.metric strong{font-size:30px;display:block;color:#17243d}.metric.danger strong{color:#cc4958}.metric span,.metric small{display:block;color:#72829c}.metric small{margin-top:7px;font-size:12px}.panel-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.panel-head span{color:#71809a;font-size:13px}.thumb{width:72px;height:54px;object-fit:cover;border-radius:7px;background:#edf2f8}.clickable{cursor:zoom-in}.sample-cell{display:flex;align-items:center;gap:10px}.sample-cell span{max-width:130px;overflow:hidden;text-overflow:ellipsis}.ok{color:#168353}.blocked{color:#bb7b1a}.detail{display:grid;grid-template-columns:1.25fr 1fr;gap:22px}.image-stage-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}.image-stage-head span{font-size:12px;color:#71809a}.audit-image{position:relative;background:#0f1b30;line-height:0;width:100%;max-height:560px;overflow:auto}.audit-image img{display:block;width:100%;height:auto;background:#0f1b30}.audit-box{position:absolute;box-sizing:border-box;border:3px solid #f59e0b;background:transparent!important;color:transparent!important;font-size:0!important;line-height:0!important;min-width:18px;min-height:18px;pointer-events:auto}.audit-box.l1{border-color:#f59e0b}.audit-box.l2{border-color:#22c55e}.audit-box.vlm{border-color:#3b82f6}.audit-box.human{border-color:#a855f7}.box-legend{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:9px 0;color:#53637c;font-size:12px}.box-legend i{font-style:normal;color:#a1adbf}.legend-dot{display:inline-block;width:10px;height:10px;border:2px solid;border-radius:2px;background:transparent}.legend-dot.l1{border-color:#f59e0b}.legend-dot.l2{border-color:#22c55e}.legend-dot.vlm{border-color:#3b82f6}.legend-dot.human{border-color:#a855f7}.box-note{color:#71809a;font-size:12px}.consistency-warning{margin:0 0 12px;padding:10px 12px;border:1px solid #fecaca;background:#fff1f2;color:#b91c1c;border-radius:8px;font-weight:700;line-height:1.55}.detail p{line-height:1.7;word-break:break-word;margin:4px 0}.lifecycle-stages{margin-top:12px;padding:14px;background:#f7f9fc;border-radius:8px}.stage-card{appearance:none;width:100%;position:relative;margin-top:9px;padding:9px 10px 9px 15px;border:0;border-left:3px solid #94a3b8;background:#fff;border-radius:6px;text-align:left;cursor:pointer}.stage-card:hover,.stage-card.selected{background:#eef6ff;box-shadow:0 0 0 1px #bfdbfe inset}.stage-card::before{content:'';position:absolute;left:-7px;top:15px;width:10px;height:10px;border-radius:50%;background:#94a3b8}.stage-card.done{border-color:#22a06b}.stage-card.done::before{background:#22a06b}.stage-card.waiting{border-color:#e2a126}.stage-card.waiting::before{background:#e2a126}.stage-card.blocked{border-color:#d94f5d}.stage-card.blocked::before{background:#d94f5d}.stage-card strong,.stage-card span,.stage-card small{display:block}.stage-card span{color:#334155;font-size:13px;line-height:1.55;margin-top:2px}.stage-card small{color:#71809a;font-size:12px;line-height:1.5;margin-top:2px}.chain-detail{min-width:0}@media(max-width:1200px){.context{grid-template-columns:1fr 1fr}.metrics{grid-template-columns:1fr}.detail{grid-template-columns:1fr}}
 </style>
+

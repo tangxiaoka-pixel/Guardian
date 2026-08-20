@@ -1261,9 +1261,8 @@ function ingestForgeSample(body = {}) {
     : verdict === 'negative' ? 'edge_rejected_candidate'
       : 'boundary'
   const suggestedClass = String(vlm.container_class || raw.container_class || '').trim()
-  const bbox = Array.isArray(raw.label_bbox_norm) && raw.label_bbox_norm.length >= 4
-    ? raw.label_bbox_norm
-    : (Array.isArray(raw.bbox) ? raw.bbox : [])
+  const vlmBox = firstVlmBoxCandidate(raw, vlm)
+  const bbox = vlmBox.box
   // Keep VLM localisation separate from the edge candidate box.  The UI uses
   // this field to render a real VLM overlay and must never infer it from L1/L2.
   const vlmAuditedAt = String(vlm.audited_at || vlm.at || raw.vlm_audited_at || raw.updated_at || raw.created_at || businessNow())
@@ -1321,11 +1320,14 @@ function ingestForgeSample(body = {}) {
     l2_bbox: raw.l2?.bbox || raw.l2_bbox || existing?.l2_bbox || [],
     l2_model_version: raw.l2?.model_version || raw.l2_model_version || existing?.l2_model_version || '',
     bbox,
-    label_bbox_norm: bbox,
+    label_bbox_norm: vlmBox.format.includes('norm') ? bbox : [],
+    label_bbox_format: vlmBox.format,
     vlm: {
       ...vlm,
       status: 'completed',
-      bbox_norm: bbox,
+      bbox: bbox,
+      bbox_format: vlmBox.format,
+      bbox_norm: vlmBox.format.includes('norm') ? bbox : [],
       audited_at: vlmAuditedAt,
     },
     vlm_audited_at: vlmAuditedAt,
@@ -2026,6 +2028,38 @@ function forgeSampleBusinessDecision(sample = {}) {
   if (labelStatus === 'need_human_box') return 'human_box_required'
   if (labelStatus === 'need_human_review') return 'human_review'
   return sample.vlm ? 'human_review' : 'waiting'
+}
+function firstVlmBoxCandidate(raw = {}, vlm = {}) {
+  const candidates = []
+  const add = (box, format = '') => {
+    if (Array.isArray(box) && box.length >= 4) candidates.push({ box: box.slice(0, 4), format })
+  }
+  const addLabelBoxes = (labels, fallbackFormat = '') => {
+    if (!Array.isArray(labels)) return
+    for (const label of labels) {
+      if (Array.isArray(label)) add(label, fallbackFormat)
+      else if (label && typeof label === 'object') {
+        add(
+          label.bbox || label.box || label.bbox_norm || label.bbox_xyxy_norm || label.xyxy || label.xywh,
+          String(label.bbox_format || label.format || label.coordinate_format || (label.xywh ? 'xywh' : label.xyxy ? 'xyxy' : label.bbox_xyxy_norm ? 'xyxy_norm' : label.bbox_norm ? 'xyxy_norm' : fallbackFormat)).toLowerCase(),
+        )
+      }
+    }
+  }
+  addLabelBoxes(vlm.suggested_labels)
+  addLabelBoxes(raw.suggested_labels)
+  addLabelBoxes(vlm.labels)
+  addLabelBoxes(vlm.detections)
+  addLabelBoxes(vlm.boxes)
+  add(vlm.bbox_xyxy_norm, 'xyxy_norm')
+  add(raw.vlm_bbox_xyxy_norm, 'xyxy_norm')
+  add(vlm.bbox_norm, String(vlm.bbox_format || vlm.bbox_norm_format || 'xyxy_norm').toLowerCase())
+  add(raw.vlm_bbox_norm, String(raw.vlm_bbox_format || raw.vlm_bbox_norm_format || 'xyxy_norm').toLowerCase())
+  add(raw.label_bbox_norm, String(raw.label_bbox_format || 'xyxy_norm').toLowerCase())
+  add(vlm.xyxy, 'xyxy')
+  add(vlm.xywh, 'xywh')
+  add(raw.vlm_bbox, String(raw.vlm_bbox_format || '').toLowerCase())
+  return candidates[0] || { box: [], format: '' }
 }
 
 function forgeMaterialRows() {

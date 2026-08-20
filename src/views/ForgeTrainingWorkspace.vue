@@ -202,38 +202,83 @@ function drawableBoxesForStage(row:any, stageKey:string){
   const human=row.sample_judgement?.human || {}
   if(stageKey === 'l1') return isEdgeStageReported(l1) ? stageBoxes(l1.bbox || row.l1_bbox,'L1 检测框','l1') : []
   if(stageKey === 'l2') return isEdgeStageReported(l2) ? stageBoxes(l2.bbox || row.l2_bbox,'L2 检测框','l2') : []
-  if(stageKey === 'vlm') return stageBoxes(row.vlm_boxes || vlm.boxes || vlm.bbox_norm || row.label_bbox_norm,'VLM 审计框','vlm')
+  if(stageKey === 'vlm') return stageBoxes(vlmBoxCandidates(row, vlm),'VLM 审计框','vlm')
   if(stageKey === 'human') return stageBoxes(human.bbox || row.human_bbox || row.human_label_bbox_norm,'人工确认框','human')
-  if(stageKey === 'training') return stageBoxes(human.bbox || row.human_bbox || row.human_label_bbox_norm || row.vlm_boxes || vlm.boxes || row.label_bbox_norm,'最终训练框','human')
+  if(stageKey === 'training') return stageBoxes(human.bbox || row.human_bbox || row.human_label_bbox_norm || vlmBoxCandidates(row, vlm),'最终训练框','human')
   return []
 }
 function asBoxes(raw:any){
   if(!Array.isArray(raw) || raw.length<4) return []
   return Array.isArray(raw[0]) || typeof raw[0] === 'object' ? raw : [raw]
 }
+function vlmBoxCandidates(row:any, vlm:any){
+  const result:any[]=[]
+  const pushBox=(box:any, format='')=>{
+    if(!Array.isArray(box) || box.length<4) return
+    result.push({ bbox: box.slice(0,4), bbox_format: format })
+  }
+  const pushObjectBoxes=(value:any, fallbackFormat='')=>{
+    if(!Array.isArray(value)) return
+    for(const item of value){
+      if(Array.isArray(item)) pushBox(item, fallbackFormat)
+      else if(item && typeof item === 'object'){
+        const box=item.bbox || item.box || item.bbox_norm || item.bbox_xyxy_norm || item.xyxy || item.xywh
+        const format=String(item.bbox_format || item.format || item.coordinate_format || (item.xywh ? 'xywh' : item.xyxy ? 'xyxy' : item.bbox_xyxy_norm ? 'xyxy_norm' : item.bbox_norm ? 'xyxy_norm' : fallbackFormat)).toLowerCase()
+        pushBox(box, format)
+      }
+    }
+  }
+  pushObjectBoxes(vlm?.suggested_labels)
+  pushObjectBoxes(row?.suggested_labels)
+  pushObjectBoxes(vlm?.labels)
+  pushObjectBoxes(vlm?.detections)
+  pushObjectBoxes(row?.vlm_raw?.suggested_labels)
+  pushObjectBoxes(row?.vlm_raw?.labels)
+  pushObjectBoxes(row?.vlm_raw?.detections)
+  pushObjectBoxes(vlm?.boxes)
+  pushObjectBoxes(row?.vlm_raw?.boxes)
+  pushBox(vlm?.bbox_xyxy_norm, 'xyxy_norm')
+  pushBox(row?.vlm_raw?.bbox_xyxy_norm, 'xyxy_norm')
+  pushBox(vlm?.bbox_norm, String(vlm?.bbox_format || vlm?.bbox_norm_format || 'xyxy_norm').toLowerCase())
+  pushBox(row?.vlm_raw?.bbox_norm, String(row?.vlm_raw?.bbox_format || row?.vlm_raw?.bbox_norm_format || 'xyxy_norm').toLowerCase())
+  pushBox(row?.label_bbox_norm, String(row?.label_bbox_format || 'xyxy_norm').toLowerCase())
+  pushObjectBoxes(row?.vlm_boxes)
+  pushBox(row?.vlm_boxes, String(row?.vlm_bbox_format || '').toLowerCase())
+  return result
+}
 function normaliseBox(raw:any,width:number,height:number){
   const payload=boxPayload(raw)
   if(!payload.values.length) return null
   const [a,b,c,d]=payload.values
   if(![a,b,c,d].every(Number.isFinite)) return null
-  const isNorm=Math.max(Math.abs(a),Math.abs(b),Math.abs(c),Math.abs(d))<=1.01
   const fmt=payload.format
+  const isNorm=fmt.includes('norm') || Math.max(Math.abs(a),Math.abs(b),Math.abs(c),Math.abs(d))<=1.01
   let x1=a,y1=b,x2=c,y2=d
   if(fmt.includes('cxcywh') || fmt.includes('center')){
     x1=a-c/2; y1=b-d/2; x2=a+c/2; y2=b+d/2
+  } else if(fmt.includes('xywh') && !fmt.includes('xyxy')){
+    x2=a+c; y2=b+d
+  } else if((c<=a || d<=b) && canRecoverXywh(a,b,c,d,isNorm,width,height)){
+    x2=a+c; y2=b+d
   }
-  const canBeXywh=isNorm ? a+c<=1.05 && b+d<=1.05 : Boolean(width && height && a+c<=width*1.05 && b+d<=height*1.05)
-  if((fmt.includes('xywh') && !fmt.includes('cxcywh')) || ((c<=a || d<=b) && canBeXywh)){ x2=a+c; y2=b+d }
   if(x2<=x1 || y2<=y1) return null
-  if(isNorm) return [x1,y1,x2,y2]
+  if(isNorm) return clampNormBox([x1,y1,x2,y2])
   if(!width || !height) return null
-  return [x1/width,y1/height,x2/width,y2/height]
+  return clampNormBox([x1/width,y1/height,x2/width,y2/height])
+}
+function canRecoverXywh(a:number,b:number,c:number,d:number,isNorm:boolean,width:number,height:number){
+  return isNorm ? a+c<=1.05 && b+d<=1.05 : Boolean(width && height && a+c<=width*1.05 && b+d<=height*1.05)
+}
+function clampNormBox(box:number[]){
+  const [x1,y1,x2,y2]=box.map((value)=>Math.max(0,Math.min(1,value)))
+  return x2>x1 && y2>y1 ? [x1,y1,x2,y2] : null
 }
 function boxPayload(raw:any){
   if(Array.isArray(raw)) return { values:raw.slice(0,4).map(Number), format:'' }
   if(raw && typeof raw === 'object'){
+    if(['x','y','width','height'].every((key)=>Number.isFinite(Number(raw[key])))) return { values:[raw.x,raw.y,raw.width,raw.height].map(Number), format:String(raw.format || raw.bbox_format || raw.coordinate_format || 'xywh').toLowerCase() }
     const box=raw.bbox || raw.box || raw.bbox_norm || raw.bbox_xyxy_norm || raw.xyxy || raw.xywh || []
-    const format=String(raw.format || raw.bbox_format || raw.coordinate_format || (raw.xywh ? 'xywh' : raw.xyxy ? 'xyxy' : raw.bbox_xyxy_norm ? 'xyxy_norm' : raw.bbox_norm_format || '')).toLowerCase()
+    const format=String(raw.format || raw.bbox_format || raw.coordinate_format || (raw.xywh ? 'xywh' : raw.xyxy ? 'xyxy' : raw.bbox_xyxy_norm ? 'xyxy_norm' : raw.bbox_norm ? 'xyxy_norm' : raw.bbox_norm_format || '')).toLowerCase()
     return { values:Array.isArray(box) ? box.slice(0,4).map(Number) : [], format }
   }
   return { values:[], format:'' }
@@ -323,7 +368,7 @@ function edgeVlmWarning(row:any){
   const width=selectedImageSize.value.width, height=selectedImageSize.value.height
   const edgeRaw=(asBoxes(l2.bbox).length ? l2.bbox : l1.bbox) || []
   const edgeBox=asBoxes(edgeRaw).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean)[0]
-  const vlmBox=asBoxes(row.vlm_boxes || vlm.boxes || vlm.bbox_norm || row.label_bbox_norm).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean)[0]
+  const vlmBox=asBoxes(vlmBoxCandidates(row, vlm)).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean)[0]
   if(edgeHit && vlmHit && edgeBox && vlmBox && boxIou(edgeBox,vlmBox)<0.2) return '注意：VLM 标注框与 L1/L2 检测框位置偏差较大，不能直接作为训练标签，建议人工修框。'
   return ''
 }

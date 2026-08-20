@@ -1030,9 +1030,92 @@ function demoClientAlarms() {
   ]
 }
 
+function parseAlarmJsonish(value, fallback = null) {
+  if (Array.isArray(value) || (value && typeof value === 'object')) return value
+  if (typeof value === 'string' && value.trim()) {
+    try { return JSON.parse(value) } catch {}
+  }
+  return fallback
+}
+
+function normalizeAlarmBox(value) {
+  const parsed = parseAlarmJsonish(value, value)
+  if (!Array.isArray(parsed) || parsed.length < 4) return []
+  const box = parsed.slice(0, 4).map((item) => Number(item))
+  return box.every(Number.isFinite) && box[2] > box[0] && box[3] > box[1] ? box : []
+}
+
+function normalizeAlarmDetections(value, source = '') {
+  const parsed = parseAlarmJsonish(value, value)
+  if (!Array.isArray(parsed)) return []
+  return parsed.map((item) => {
+    const record = item && typeof item === 'object' && !Array.isArray(item) ? item : { bbox: item }
+    const bbox = normalizeAlarmBox(record.bbox || record.box || record.xyxy)
+    if (!bbox.length) return null
+    const confidence = Number(record.confidence ?? record.conf ?? record.score ?? 0)
+    return {
+      ...record,
+      class_name: String(record.class_name || record.className || record.label || record.class || record.category || 'drink_container'),
+      confidence: Number.isFinite(confidence) ? confidence : 0,
+      bbox,
+      source: record.source || source,
+    }
+  }).filter(Boolean)
+}
+
+function alarmBoxIou(a = [], b = []) {
+  if (!a.length || !b.length) return 0
+  const x1 = Math.max(a[0], b[0])
+  const y1 = Math.max(a[1], b[1])
+  const x2 = Math.min(a[2], b[2])
+  const y2 = Math.min(a[3], b[3])
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1)
+  const areaA = Math.max(0, a[2] - a[0]) * Math.max(0, a[3] - a[1])
+  const areaB = Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1])
+  const union = areaA + areaB - inter
+  return union > 0 ? inter / union : 0
+}
+
+function dedupeAlarmTargets(targets = []) {
+  return targets.reduce((acc, target) => {
+    const index = acc.findIndex((existing) => alarmBoxIou(existing.bbox, target.bbox) >= 0.75)
+    if (index < 0) {
+      acc.push(target)
+    } else if (Number(target.confidence || 0) > Number(acc[index].confidence || 0)) {
+      acc[index] = target
+    }
+    return acc
+  }, [])
+}
+
+function alarmTargetsFromRecord(item = {}) {
+  const detections = [
+    ...normalizeAlarmDetections(item.targets, 'targets'),
+    ...normalizeAlarmDetections(item.current_targets, 'current_targets'),
+    ...normalizeAlarmDetections(item.l2_detections || item.l2Detections, 'l2_detections'),
+    ...normalizeAlarmDetections(item.l2_output?.detections || item.l2_output?.targets, 'l2_output'),
+    ...normalizeAlarmDetections(item.l1_detections || item.l1Detections, 'l1_detections'),
+    ...normalizeAlarmDetections(item.l1_output?.detections || item.l1_output?.targets, 'l1_output'),
+  ]
+  const singleCandidates = [
+    { bbox: item.l2_bbox || item.l2_output?.bbox, class_name: item.l2_class || item.l2_output?.class_name, confidence: item.l2_confidence || item.l2_output?.confidence, source: 'l2_bbox' },
+    { bbox: item.bbox || item.bbox_json, class_name: item.class_name || item.target_class || item.alarm_type || item.algorithm, confidence: item.confidence || item.audit_score, source: 'bbox' },
+    { bbox: item.l1_bbox || item.l1_output?.bbox, class_name: item.l1_class || item.l1_output?.class_name, confidence: item.l1_confidence || item.l1_output?.confidence, source: 'l1_bbox' },
+  ].map((record) => ({ ...record, bbox: normalizeAlarmBox(record.bbox), confidence: Number(record.confidence || 0) }))
+    .filter((record) => record.bbox.length)
+  return dedupeAlarmTargets([...detections, ...singleCandidates])
+}
+
 function normalizeAlarmRecord(item) {
   const alarmId = item.alarm_id || lifecycleId('alarm')
   const effective = item.audit_verdict === 'confirm' || item.audit_status === 'done' || item.source === 'rk3568_l2'
+  const targets = alarmTargetsFromRecord(item)
+  const normalizedBbox = normalizeAlarmBox(item.bbox || item.bbox_json)
+  const primaryBbox = normalizedBbox.length ? normalizedBbox : (targets[0]?.bbox || item.bbox)
+  const l2Detections = [
+    ...normalizeAlarmDetections(item.l2_detections || item.l2Detections, 'l2_detections'),
+    ...normalizeAlarmDetections(item.l2_output?.detections || item.l2_output?.targets, 'l2_output'),
+  ]
   return {
     ...item,
     alarm_id: alarmId,
@@ -1048,8 +1131,16 @@ function normalizeAlarmRecord(item) {
     status: item.status || (effective ? '有效告警' : '未确认'),
     assignee: item.assignee || '值班室',
     feedback_result: item.feedback_result || '',
+    bbox: primaryBbox,
     l1_output: item.l1_output || { class_name: item.alarm_type || item.algorithm || 'unknown', confidence: item.confidence ?? 0 },
-    l2_output: item.l2_output || { final_decision: effective ? 'confirmed' : 'pending' },
+    l2_output: {
+      ...(item.l2_output || { final_decision: effective ? 'confirmed' : 'pending' }),
+      detections: l2Detections.length ? l2Detections : item.l2_output?.detections,
+    },
+    targets,
+    current_targets: targets,
+    target_count: targets.length || Number(item.target_count || 0) || undefined,
+    l2_detections: l2Detections.length ? l2Detections : item.l2_detections,
     rule_result: item.rule_result || { reasoning: item.reasoning || '' },
     human_records: item.human_records || [],
   }
@@ -1175,22 +1266,61 @@ function forgeEdgeStageReported(stage = {}, fallback = '') {
   return Boolean(value) && !['not_reported', 'not_run', 'pending', 'queued', ''].includes(value)
 }
 
+function parseForgeJsonish(value, fallback = null) {
+  if (value === undefined || value === null || value === '') return fallback
+  if (Array.isArray(value) || typeof value === 'object') return value
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return fallback
+    }
+  }
+  return fallback
+}
+
+function normalizeForgeBox(value, fallback = []) {
+  const parsed = parseForgeJsonish(value, value)
+  if (!Array.isArray(parsed) || parsed.length < 4) return fallback
+  const box = parsed.slice(0, 4).map((item) => Number(item))
+  return box.every(Number.isFinite) && box[2] > box[0] && box[3] > box[1] ? box : fallback
+}
+
+function normalizeForgeStringArray(value, fallback = []) {
+  const parsed = parseForgeJsonish(value, value)
+  if (Array.isArray(parsed)) return parsed.map((item) => String(item)).filter(Boolean)
+  const text = String(parsed || '').trim()
+  return text ? [text] : fallback
+}
+
+function normalizeForgeStage(raw = {}, key = 'l1', existing = {}) {
+  const stage = parseForgeJsonish(raw[key], raw[key]) || {}
+  const className = String(stage.class_name || stage.className || raw[`${key}_class`] || existing?.[`${key}_class`] || '').trim()
+  const classes = normalizeForgeStringArray(stage.classes || raw[`${key}_classes`] || existing?.[`${key}_classes`], className ? [className] : [])
+  const bbox = normalizeForgeBox(stage.bbox || raw[`${key}_bbox`] || existing?.[`${key}_bbox`])
+  const confidence = Number(stage.confidence ?? raw[`${key}_confidence`] ?? existing?.[`${key}_confidence`] ?? 0)
+  const status = stage.status || raw[`${key}_status`] || existing?.[`${key}_status`] || (bbox.length ? 'hit' : '')
+  return { stage, className, classes, bbox, confidence: Number.isFinite(confidence) ? confidence : 0, status }
+}
+
 function forgeSourceNote(raw = {}, existing = {}) {
   const collectionType = forgeSampleCollectionType(raw, existing).toLowerCase()
   const existingNote = String(raw.source_note || raw.sourceNote || existing?.source_note || '').trim()
   if (existingNote && !/KKOS 新采集|现场新采集/.test(existingNote)) return existingNote
+  const l1Stage = normalizeForgeStage(raw, 'l1', existing)
+  const l2Stage = normalizeForgeStage(raw, 'l2', existing)
   const judgement = raw.sample_judgement || raw.sampleJudgement || existing?.sample_judgement || existing?.sampleJudgement || {}
   const l1Judgement = judgement?.l1 || {}
   const l2Judgement = judgement?.l2 || {}
-  const hasL2Evidence = forgeEdgeStageReported(raw.l2 || raw.l2_result, raw.l2_status)
-    || (Array.isArray(raw.l2_bbox) && raw.l2_bbox.length >= 4)
-    || (Array.isArray(raw.l2_boxes) && raw.l2_boxes.length > 0)
+  const hasL2Evidence = forgeEdgeStageReported(l2Stage.stage || raw.l2_result, l2Stage.status)
+    || l2Stage.bbox.length >= 4
+    || normalizeForgeBox(raw.l2_boxes).length >= 4
     || forgeEdgeStageReported(l2Judgement)
     || (Array.isArray(l2Judgement.bbox) && l2Judgement.bbox.length >= 4)
     || (Array.isArray(l2Judgement.boxes) && l2Judgement.boxes.length > 0)
-  const hasL1Evidence = forgeEdgeStageReported(raw.l1 || raw.l1_result, raw.l1_status)
-    || (Array.isArray(raw.l1_bbox) && raw.l1_bbox.length >= 4)
-    || (Array.isArray(raw.l1_boxes) && raw.l1_boxes.length > 0)
+  const hasL1Evidence = forgeEdgeStageReported(l1Stage.stage || raw.l1_result, l1Stage.status)
+    || l1Stage.bbox.length >= 4
+    || normalizeForgeBox(raw.l1_boxes).length >= 4
     || forgeEdgeStageReported(l1Judgement)
     || (Array.isArray(l1Judgement.bbox) && l1Judgement.bbox.length >= 4)
     || (Array.isArray(l1Judgement.boxes) && l1Judgement.boxes.length > 0)
@@ -1269,6 +1399,17 @@ function ingestForgeSample(body = {}) {
   const samples = lifecycleRegistry('samples')
   const existing = samples.find((item) => item.sample_id === localId)
   const collectionType = forgeSampleCollectionType(raw, existing)
+  const l1Stage = normalizeForgeStage(raw, 'l1', existing)
+  const l2Stage = normalizeForgeStage(raw, 'l2', existing)
+  const rawL2Detections = parseForgeJsonish(raw.l2_detections || raw.l2Detections || l2Stage.stage?.detections || existing?.l2_detections, [])
+  const l2Detections = Array.isArray(rawL2Detections)
+    ? rawL2Detections.map((item) => ({
+      ...item,
+      class_name: String(item?.class_name || item?.className || ''),
+      confidence: Number(item?.confidence || 0),
+      bbox: normalizeForgeBox(item?.bbox),
+    })).filter((item) => item.bbox.length >= 4)
+    : []
   const row = {
     ...(existing || {}),
     sample_id: localId,
@@ -1277,7 +1418,7 @@ function ingestForgeSample(body = {}) {
     site_id: siteId,
     camera_id: String(raw.camera_id || raw.cameraId || ''),
     scenario,
-    source_event_id: String(raw.trace_id || raw.traceId || raw.trigger_id || raw.triggerId || ''),
+    source_event_id: String(raw.source_event_id || raw.sourceEventId || raw.alarm_id || raw.alarmId || raw.event_id || raw.eventId || raw.trace_id || raw.traceId || raw.trigger_id || raw.triggerId || ''),
     source_type: 'guardian_forge_live',
     source_note: forgeSourceNote(raw, existing),
     collection_type: collectionType,
@@ -1309,16 +1450,17 @@ function ingestForgeSample(body = {}) {
     suggested_labels: suggestedClass && !['none', 'uncertain'].includes(suggestedClass) ? [suggestedClass] : [],
     // Keep edge evidence separate from the VLM output.  The Forge detail
     // page renders these as distinct L1/L2/VLM layers for one material.
-    l1_status: raw.l1?.status || raw.l1_status || existing?.l1_status || '',
-    l1_classes: raw.l1?.classes || raw.l1_classes || existing?.l1_classes || [],
-    l1_confidence: Number(raw.l1?.confidence ?? raw.l1_confidence ?? existing?.l1_confidence ?? 0),
-    l1_bbox: raw.l1?.bbox || raw.l1_bbox || existing?.l1_bbox || [],
-    l1_model_version: raw.l1?.model_version || raw.l1_model_version || existing?.l1_model_version || '',
-    l2_status: raw.l2?.status || raw.l2_status || existing?.l2_status || '',
-    l2_classes: raw.l2?.classes || raw.l2_classes || existing?.l2_classes || [],
-    l2_confidence: Number(raw.l2?.confidence ?? raw.l2_confidence ?? existing?.l2_confidence ?? 0),
-    l2_bbox: raw.l2?.bbox || raw.l2_bbox || existing?.l2_bbox || [],
-    l2_model_version: raw.l2?.model_version || raw.l2_model_version || existing?.l2_model_version || '',
+    l1_status: l1Stage.status,
+    l1_classes: l1Stage.classes,
+    l1_confidence: l1Stage.confidence,
+    l1_bbox: l1Stage.bbox,
+    l1_model_version: l1Stage.stage?.model_version || raw.l1_model_version || existing?.l1_model_version || '',
+    l2_status: l2Stage.status,
+    l2_classes: l2Stage.classes,
+    l2_confidence: l2Stage.confidence,
+    l2_bbox: l2Stage.bbox,
+    l2_model_version: l2Stage.stage?.model_version || raw.l2_model_version || existing?.l2_model_version || '',
+    l2_detections: l2Detections,
     bbox,
     label_bbox_norm: vlmBox.format.includes('norm') ? bbox : [],
     label_bbox_format: vlmBox.format,
@@ -1348,6 +1490,92 @@ function ingestForgeSample(body = {}) {
     scenario,
   })
   return { ok: true, status: existing ? 200 : 201, sample: enrichSample(row), created: !existing }
+}
+
+function dataUrlToBase64(value = '') {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  const commaIndex = text.indexOf(',')
+  if (text.startsWith('data:') && commaIndex >= 0) return text.slice(commaIndex + 1)
+  return text
+}
+
+function bboxFromAlarm(alarm = {}) {
+  const targets = alarmTargetsFromRecord(alarm)
+  if (targets[0]?.bbox?.length >= 4) return targets[0].bbox
+  const candidates = [alarm.bbox, alarm.bbox_json, alarm.l2_bbox, alarm.l1_bbox]
+  for (const value of candidates) {
+    if (Array.isArray(value) && value.length >= 4) return value.slice(0, 4).map(Number)
+    if (typeof value === 'string' && value.trim()) {
+      try {
+        const parsed = JSON.parse(value)
+        if (Array.isArray(parsed) && parsed.length >= 4) return parsed.slice(0, 4).map(Number)
+      } catch {}
+    }
+  }
+  return []
+}
+
+function ingestForgeSampleFromAlarm(alarm = {}) {
+  const scenario = String(alarm.algorithm || alarm.alarm_type || '').trim()
+  const alarmId = String(alarm.alarm_id || '').trim()
+  const imageBase64 = dataUrlToBase64(alarm.snapshot || alarm.image_base64 || alarm.imageBase64 || '')
+  if (!alarmId || !scenario || !imageBase64) return { ok: false, skipped: true, detail: 'alarm missing id, scenario or snapshot' }
+
+  const action = String(alarm.event_action || alarm.lifecycle_action || '').toLowerCase()
+  const resolved = action === 'resolved' || alarm.alarm_status === 'resolved'
+  const targets = alarmTargetsFromRecord(alarm)
+  const bbox = bboxFromAlarm(alarm)
+  const confidence = Number(alarm.confidence || alarm.l2_confidence || alarm.l2_output?.confidence || 0)
+  const klass = String(alarm.class_name || alarm.target_class || alarm.l2_class || alarm.l2_output?.class_name || (resolved ? 'drink_container' : 'drink_container'))
+  const sampleId = resolved ? `alarm_${alarmId}_resolved` : `alarm_${alarmId}`
+  const sourceNote = resolved
+    ? '报警消除验证帧：L2 连续复核未发现饮品容器，用于确认报警消除和沉淀困难负样本。'
+    : '告警上报帧：L2 复核确认风险后进入 Forge，用于 VLM 审计、人工复核和训练闭环。'
+  return ingestForgeSample({
+    image_base64: imageBase64,
+    sample: {
+      sample_id: sampleId,
+      alarm_id: alarmId,
+      event_id: alarm.event_id || '',
+      trace_id: alarm.trace_id || alarmId,
+      source_event_id: alarmId,
+      customer_id: alarm.customer_id,
+      site_id: alarm.site_id,
+      camera_id: alarm.camera_id,
+      scenario,
+      collection_type: resolved ? 'alarm_resolved_frame' : 'l2_alarm_frame',
+      source_note: sourceNote,
+      privacy_status: 'privacy_processed',
+      privacy_method: 'desk_roi_face_blur_v3',
+      privacy_actions: ['desk_roi', 'face_blur_detected_only', 'remove_metadata'],
+      consent_status: 'authorized',
+      created_at: alarm.updated_at || alarm.received_at || alarm.timestamp || businessNow(),
+      targets,
+      l1: {
+        status: alarm.l1_output ? 'reported' : '',
+        classes: alarm.l1_output?.class_name ? [alarm.l1_output.class_name] : [],
+        confidence: Number(alarm.l1_output?.confidence || 0),
+        bbox: Array.isArray(alarm.l1_bbox) ? alarm.l1_bbox : [],
+      },
+      l2: {
+        status: resolved ? 'cleared' : 'hit',
+        classes: klass ? [klass] : [],
+        confidence,
+        bbox,
+        detections: targets,
+      },
+      l2_detections: targets,
+      bbox,
+      confidence,
+      vlm: {
+        verdict: resolved ? 'negative' : 'uncertain',
+        confidence: resolved ? 0.9 : 0,
+        reason: resolved ? '报警消除帧：当前画面未确认饮品容器。' : '告警帧等待 VLM 审计。',
+      },
+      label_status: resolved ? 'auto_negative' : '',
+    },
+  })
 }
 
 function inferLifecycleContext(body = {}) {
@@ -6413,7 +6641,7 @@ http.createServer(async (req, res) => {
         : keepCustomerDisposition
           ? { alarm_status: existing.alarm_status, event_status: existing.event_status || 'closed', lifecycle_action: action, last_seen_at: now }
         : { alarm_status: 'active', event_status: 'pending_dispatch', last_seen_at: now, lifecycle_action: action }
-      const alarm = {
+      const alarm = normalizeAlarmRecord({
         ...(existing || {}),
         ...body,
         alarm_id: body.alarm_id || lifecycleId('alarm'),
@@ -6428,11 +6656,19 @@ http.createServer(async (req, res) => {
         received_at: existing?.received_at || now,
         updated_at: now,
         ...lifecyclePatch,
-      }
+      })
       const rows = cloudAlarms().filter((item) => item.alarm_id !== alarm.alarm_id)
       rows.unshift(alarm)
       writeCloudAlarms(rows.slice(0, 1000))
-      return send(res, 201, alarm)
+      const forgeIngest = ingestForgeSampleFromAlarm(alarm)
+      if (!forgeIngest.ok && !forgeIngest.skipped) {
+        appendLifecycleAudit('alarm_forge_ingest_failed', {
+          alarm_id: alarm.alarm_id,
+          scenario: alarm.algorithm || alarm.alarm_type || '',
+          detail: forgeIngest.detail || 'unknown error',
+        })
+      }
+      return send(res, 201, { ...alarm, forge_ingest: forgeIngest.ok ? { ok: true, sample_id: forgeIngest.sample?.sample_id || '' } : { ok: false, detail: forgeIngest.detail || 'skipped' } })
     }
     return send(res, 405, { detail: 'method not allowed' })
   }

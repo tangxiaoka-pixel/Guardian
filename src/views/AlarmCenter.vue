@@ -14,9 +14,9 @@
         <el-table-column label="操作" width="330">
           <template #default="{ row }">
             <el-button size="small" @click="open(row)">详情</el-button>
-            <el-button size="small" type="success" @click="confirm(row.alarm_id)">有效</el-button>
-            <el-button size="small" type="warning" @click="reject(row.alarm_id)">误报</el-button>
-            <el-button size="small" @click="ignore(row.alarm_id)">忽略</el-button>
+            <el-button size="small" type="success" :disabled="isResolved(row)" @click="confirm(row.alarm_id)">有效</el-button>
+            <el-button size="small" type="warning" :disabled="isResolved(row)" @click="reject(row.alarm_id)">误报</el-button>
+            <el-button size="small" :disabled="isResolved(row)" @click="ignore(row.alarm_id)">忽略</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -32,7 +32,7 @@
         </div>
         <el-descriptions :column="2" border>
           <el-descriptions-item label="L1 输出">{{ selected.l1_output.class_name }} {{ selected.l1_output.confidence }}</el-descriptions-item>
-          <el-descriptions-item label="L2 输出">{{ selected.l2_output.final_decision }}</el-descriptions-item>
+          <el-descriptions-item label="L2 输出">{{ l2DecisionText(selected) }}</el-descriptions-item>
           <el-descriptions-item label="当前风险目标">{{ targetSummary(selected) }}</el-descriptions-item>
           <el-descriptions-item label="规则判断">{{ JSON.stringify(selected.rule_result) }}</el-descriptions-item>
           <el-descriptions-item label="客户反馈">{{ selected.feedback_result || '未反馈' }}</el-descriptions-item>
@@ -96,7 +96,16 @@ function bbox(row: any): number[] {
   return normalizeBox(row?.l2_bbox || row?.l2_output?.bbox || row?.bbox || row?.bbox_json || row?.l1_bbox)
 }
 function hasBbox(row: any) { const [x1, y1, x2, y2] = bbox(row); return x2 > x1 && y2 > y1 }
+function isResolved(row: any) {
+  const reasoning = `${row?.reasoning || ''} ${row?.rule_result?.reasoning || ''}`
+  return row?.alarm_status === 'resolved'
+    || row?.event_status === 'closed'
+    || row?.l2_output?.final_decision === 'resolved'
+    || reasoning.includes('报警已消除')
+    || reasoning.includes('未发现饮品容器')
+}
 function targetBoxes(row: any): number[][] {
+  if (isResolved(row)) return []
   const boxes = [
     ...boxesFromDetections(row?.targets),
     ...boxesFromDetections(row?.current_targets),
@@ -112,6 +121,7 @@ function targetBoxes(row: any): number[][] {
   return unique.length ? unique : (hasBbox(row) ? [bbox(row)] : [])
 }
 function targetSummary(row: any) {
+  if (isResolved(row)) return '无当前风险目标（报警已消除）'
   const rawTargets = [
     ...(parseJsonish(row?.targets, []) || []),
     ...(parseJsonish(row?.current_targets, []) || []),
@@ -128,6 +138,10 @@ function targetSummary(row: any) {
   const counts: Record<string, number> = {}
   targets.forEach((target: any) => { const name = target?.class_name || 'drink_container'; counts[name] = (counts[name] || 0) + 1 })
   return Object.entries(counts).map(([name, count]) => `${name} × ${count}`).join('，')
+}
+function l2DecisionText(row: any) {
+  if (isResolved(row)) return '报警已消除'
+  return row?.l2_output?.final_decision || '-'
 }
 async function confirm(id: string) { await api.post(`/alarms/${id}/confirm`); await load() }
 async function reject(id: string) { await api.post(`/alarms/${id}/reject`); await load() }

@@ -1109,13 +1109,29 @@ function alarmTargetsFromRecord(item = {}) {
 function normalizeAlarmRecord(item) {
   const alarmId = item.alarm_id || lifecycleId('alarm')
   const effective = item.audit_verdict === 'confirm' || item.audit_status === 'done' || item.source === 'rk3568_l2'
+  const resolvedReason = String(item.reasoning || item.rule_result?.reasoning || '')
+  const resolved = item.alarm_status === 'resolved'
+    || item.event_status === 'closed'
+    || item.event_action === 'resolved'
+    || item.lifecycle_action === 'resolved'
+    || /报警已消除|未发现饮品容器|已消除/.test(resolvedReason)
   const targets = alarmTargetsFromRecord(item)
   const normalizedBbox = normalizeAlarmBox(item.bbox || item.bbox_json)
-  const primaryBbox = normalizedBbox.length ? normalizedBbox : (targets[0]?.bbox || item.bbox)
+  const activeTargets = resolved ? [] : targets
+  const primaryBbox = resolved ? [] : (normalizedBbox.length ? normalizedBbox : (targets[0]?.bbox || item.bbox))
   const l2Detections = [
     ...normalizeAlarmDetections(item.l2_detections || item.l2Detections, 'l2_detections'),
     ...normalizeAlarmDetections(item.l2_output?.detections || item.l2_output?.targets, 'l2_output'),
   ]
+  const activeL2Detections = resolved ? [] : l2Detections
+  const l2Output = {
+    ...(item.l2_output || { final_decision: effective ? 'confirmed' : 'pending' }),
+    final_decision: resolved ? 'resolved' : (item.l2_output?.final_decision || (effective ? 'confirmed' : 'pending')),
+    detections: activeL2Detections.length ? activeL2Detections : (resolved ? [] : item.l2_output?.detections),
+  }
+  const ruleResult = resolved
+    ? { ...(item.rule_result || {}), reasoning: item.reasoning || item.rule_result?.reasoning || 'L2 连续复核未发现饮品容器，报警已消除' }
+    : (item.rule_result || { reasoning: item.reasoning || '' })
   return {
     ...item,
     alarm_id: alarmId,
@@ -1126,22 +1142,20 @@ function normalizeAlarmRecord(item) {
     algorithm: item.algorithm || item.alarm_type || 'unknown',
     location: item.location || `通道 ${item.channel_id ?? '-'}`,
     timestamp: item.timestamp || item.received_at || businessNow(),
-    alarm_status: item.alarm_status || (effective ? 'effective' : 'unconfirmed'),
-    event_status: item.event_status || (effective ? 'pending_dispatch' : ''),
-    status: item.status || (effective ? '有效告警' : '未确认'),
+    alarm_status: resolved ? 'resolved' : (item.alarm_status || (effective ? 'effective' : 'unconfirmed')),
+    event_status: resolved ? 'closed' : (item.event_status || (effective ? 'pending_dispatch' : '')),
+    status: resolved ? '报警已消除' : (item.status || (effective ? '有效告警' : '未确认')),
     assignee: item.assignee || '值班室',
     feedback_result: item.feedback_result || '',
     bbox: primaryBbox,
     l1_output: item.l1_output || { class_name: item.alarm_type || item.algorithm || 'unknown', confidence: item.confidence ?? 0 },
-    l2_output: {
-      ...(item.l2_output || { final_decision: effective ? 'confirmed' : 'pending' }),
-      detections: l2Detections.length ? l2Detections : item.l2_output?.detections,
-    },
-    targets,
-    current_targets: targets,
-    target_count: targets.length || Number(item.target_count || 0) || undefined,
-    l2_detections: l2Detections.length ? l2Detections : item.l2_detections,
-    rule_result: item.rule_result || { reasoning: item.reasoning || '' },
+    l2_output: l2Output,
+    targets: activeTargets,
+    current_targets: activeTargets,
+    target_count: resolved ? 0 : (targets.length || Number(item.target_count || 0) || undefined),
+    l2_detections: activeL2Detections.length ? activeL2Detections : (resolved ? [] : item.l2_detections),
+    historical_targets: item.historical_targets || (resolved && targets.length ? targets : undefined),
+    rule_result: ruleResult,
     human_records: item.human_records || [],
   }
 }

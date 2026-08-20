@@ -57,19 +57,73 @@ async function load() {
   alarms.value = rows.filter((item: any) => !item.site_id || item.site_id === siteId)
 }
 function open(row: any) { selected.value = row; visible.value = true }
+function parseJsonish(value: any, fallback: any = null): any {
+  if (Array.isArray(value) || (value && typeof value === 'object')) return value
+  if (typeof value === 'string' && value.trim()) {
+    try { return JSON.parse(value) } catch (_) {}
+  }
+  return fallback
+}
+function normalizeBox(value: any): number[] {
+  const parsed = parseJsonish(value, value)
+  if (!Array.isArray(parsed) || parsed.length < 4) return []
+  const box = parsed.slice(0, 4).map(Number)
+  return box.every(Number.isFinite) && box[2] > box[0] && box[3] > box[1] ? box : []
+}
+function boxesFromDetections(value: any): number[][] {
+  const parsed = parseJsonish(value, value)
+  if (!Array.isArray(parsed)) return []
+  return parsed.map((item: any) => normalizeBox(item?.bbox || item?.box || item?.xyxy || item)).filter((box: number[]) => box.length === 4)
+}
+function boxIou(a: number[], b: number[]) {
+  const x1 = Math.max(a[0], b[0])
+  const y1 = Math.max(a[1], b[1])
+  const x2 = Math.min(a[2], b[2])
+  const y2 = Math.min(a[3], b[3])
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1)
+  const areaA = Math.max(0, a[2] - a[0]) * Math.max(0, a[3] - a[1])
+  const areaB = Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1])
+  const union = areaA + areaB - inter
+  return union > 0 ? inter / union : 0
+}
+function dedupeBoxes(boxes: number[][]) {
+  return boxes.reduce((acc: number[][], box: number[]) => {
+    if (!acc.some((existing) => boxIou(existing, box) >= 0.75)) acc.push(box)
+    return acc
+  }, [])
+}
 function bbox(row: any): number[] {
-  const value = row?.bbox || row?.l2_output?.bbox || row?.bbox_json || []
-  if (Array.isArray(value)) return value.map(Number)
-  try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed.map(Number) : [] } catch (_) { return [] }
+  return normalizeBox(row?.l2_bbox || row?.l2_output?.bbox || row?.bbox || row?.bbox_json || row?.l1_bbox)
 }
 function hasBbox(row: any) { const [x1, y1, x2, y2] = bbox(row); return x2 > x1 && y2 > y1 }
 function targetBoxes(row: any): number[][] {
-  const targets = Array.isArray(row?.targets) ? row.targets : []
-  const boxes = targets.map((target: any) => target?.bbox).filter((box: any) => Array.isArray(box) && box.length === 4).map((box: any) => box.map(Number))
-  return boxes.length ? boxes.filter(([x1, y1, x2, y2]) => x2 > x1 && y2 > y1) : (hasBbox(row) ? [bbox(row)] : [])
+  const boxes = [
+    ...boxesFromDetections(row?.targets),
+    ...boxesFromDetections(row?.current_targets),
+    ...boxesFromDetections(row?.l2_detections || row?.l2Detections),
+    ...boxesFromDetections(row?.l2_output?.detections || row?.l2_output?.targets),
+    ...boxesFromDetections(row?.l1_detections || row?.l1Detections),
+    ...boxesFromDetections(row?.l1_output?.detections || row?.l1_output?.targets),
+    normalizeBox(row?.l2_bbox || row?.l2_output?.bbox),
+    normalizeBox(row?.bbox || row?.bbox_json),
+    normalizeBox(row?.l1_bbox || row?.l1_output?.bbox),
+  ].filter((box) => box.length === 4)
+  const unique = dedupeBoxes(boxes)
+  return unique.length ? unique : (hasBbox(row) ? [bbox(row)] : [])
 }
 function targetSummary(row: any) {
-  const targets = Array.isArray(row?.targets) ? row.targets : []
+  const rawTargets = [
+    ...(parseJsonish(row?.targets, []) || []),
+    ...(parseJsonish(row?.current_targets, []) || []),
+    ...(parseJsonish(row?.l2_detections || row?.l2Detections, []) || []),
+    ...(parseJsonish(row?.l2_output?.detections || row?.l2_output?.targets, []) || []),
+  ].filter((item: any) => item && typeof item === 'object')
+  const targets = rawTargets.reduce((acc: any[], target: any) => {
+    const box = normalizeBox(target?.bbox || target?.box || target?.xyxy)
+    if (box.length && acc.some((item) => boxIou(normalizeBox(item?.bbox || item?.box || item?.xyxy), box) >= 0.75)) return acc
+    acc.push(target)
+    return acc
+  }, [])
   if (!targets.length) return row?.target_count ? `${row.target_count} 个饮品容器` : '1 个饮品容器'
   const counts: Record<string, number> = {}
   targets.forEach((target: any) => { const name = target?.class_name || 'drink_container'; counts[name] = (counts[name] || 0) + 1 })

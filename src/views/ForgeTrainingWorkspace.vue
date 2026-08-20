@@ -93,7 +93,7 @@
       <div v-if="selected" class="detail">
         <div>
           <div class="image-stage-head"><b>{{ activeStageView.title }}</b><span>{{ activeStageView.subtitle }}</span></div>
-          <div class="audit-image"><img :key="activeStageView.imageUrl" :src="asset(activeStageView.imageUrl)" @load="recordImageSize" @error="hideImage" /><template v-for="(item,index) in activeDrawableBoxes" :key="index"><span :class="['audit-box', item.source]" :style="boxStyle(item.box)" :aria-label="item.label" :title="item.label"></span></template></div>
+          <div class="audit-image"><img ref="detailImageRef" :key="`${selected?.sample_id || 'sample'}-${activeDetailStage}-${activeStageView.imageUrl}`" :src="asset(activeStageView.imageUrl)" @load="recordImageSize" @error="hideImage" /><template v-for="(item,index) in activeDrawableBoxes" :key="index"><span :class="['audit-box', item.source]" :style="boxStyle(item.box)" :aria-label="item.label" :title="item.label"></span></template></div>
           <div v-if="activeDrawableBoxes.length" class="box-legend"><span v-for="item in activeBoxLegend" :key="item.source" :class="['legend-dot', item.source]"></span><template v-for="(item, index) in activeBoxLegend" :key="`${item.source}-label`"><span>{{ item.label }}</span><i v-if="index < activeBoxLegend.length - 1">·</i></template></div>
           <p class="box-note">{{ boxNote(selected, activeDetailStage) }}</p>
         </div>
@@ -108,7 +108,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, ref, watch } from 'vue'
+import { computed, defineComponent, h, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import api, { apiAssetUrl } from '../api'
@@ -124,6 +124,7 @@ const siteId = ref(localStorage.getItem('guardian_site_id') || '')
 const scenario = ref('desk_drink_intrusion')
 const materials = ref<any[]>([]), datasets = ref<any[]>([]), trainingRuns = ref<any[]>([]), evaluations = ref<any[]>([]), models = ref<any[]>([])
 const detailVisible = ref(false), selected = ref<any>(null), selectedImageSize = ref({ width: 0, height: 0 }), activeDetailStage = ref('raw')
+const detailImageRef = ref<HTMLImageElement | null>(null)
 const activeStage = computed(() => String(route.meta.forgeStage || 'materials'))
 const pages:any = { materials:{ title:'Forge 训练中心 · 素材收集', description:'查看现场采集、隐私处理、去重与入库状态。', note:'只有带可信 KKOS 脱敏与授权来源的完整 ROI 图，才会进入后续流程。' }, vlm:{ title:'Forge 训练中心 · VLM 审计', description:'自动审计合规素材，并生成可追溯的标注草稿。', note:'VLM 使用该算法已配置的提示词；不干预现场 L1/L2 即时报警。' }, review:{ title:'Forge 训练中心 · 人工审核', description:'只处理自动系统无法可靠确认的少量素材。', note:'人工审核确认的是训练标签，不改变已经发生的现场报警。' }, datasets:{ title:'Forge 训练中心 · 训练数据集', description:'把已确认素材冻结为可复现的数据集版本。', note:'历史隔离素材及未确认素材不允许加入数据集。' }, release:{ title:'Forge 训练中心 · 训练与发布', description:'管理训练任务、评估门禁、灰度与回滚。', note:'模型必须经过离线评估和灰度生效回报，才算正式发布。' } }
 const stage = computed(() => pages[activeStage.value] || pages.materials)
@@ -153,9 +154,15 @@ function formatTime(value:any){
   return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`
 }
 function hideImage(e:any){ e.target.style.visibility='hidden' }
-function openDetail(row:any, stage='raw'){ selected.value=row; activeDetailStage.value=stage; selectedImageSize.value={width:0,height:0}; detailVisible.value=true }
-function selectDetailStage(stageKey:string){ activeDetailStage.value=stageKey }
-function recordImageSize(event:any){ selectedImageSize.value={ width:event.target.naturalWidth || 0, height:event.target.naturalHeight || 0 } }
+function refreshImageSizeFromDom(){
+  const img=detailImageRef.value
+  if(!img) return
+  img.style.visibility='visible'
+  if(img.naturalWidth && img.naturalHeight) selectedImageSize.value={ width:img.naturalWidth, height:img.naturalHeight }
+}
+function openDetail(row:any, stage='raw'){ selected.value=row; activeDetailStage.value=stage; selectedImageSize.value={width:0,height:0}; detailVisible.value=true; nextTick(refreshImageSizeFromDom) }
+function selectDetailStage(stageKey:string){ activeDetailStage.value=stageKey; selectedImageSize.value={width:0,height:0}; nextTick(refreshImageSizeFromDom) }
+function recordImageSize(event:any){ event.target.style.visibility='visible'; selectedImageSize.value={ width:event.target.naturalWidth || 0, height:event.target.naturalHeight || 0 } }
 function needsHuman(r:any){
   const vlm=r.sample_judgement?.vlm || {}
   const confidence=Number(vlm.confidence ?? r.confidence ?? 0)
@@ -194,10 +201,10 @@ function stageImageUrl(row:any, stageKey:string){
 }
 function drawableBoxesForStage(row:any, stageKey:string){
   if(!row) return []
-  const width=selectedImageSize.value.width, height=selectedImageSize.value.height
+  const width=selectedImageSize.value.width || imageWidthHint(row), height=selectedImageSize.value.height || imageHeightHint(row)
   const stageBoxes=(raw:any,label:string,source:string)=>asBoxes(raw).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean).map((box:any)=>({box,label,source}))
-  const l1=row.sample_judgement?.l1 || {}
-  const l2=row.sample_judgement?.l2 || {}
+  const l1=edgeStage(row,'l1')
+  const l2=edgeStage(row,'l2')
   const vlm=row.sample_judgement?.vlm || {}
   const human=row.sample_judgement?.human || {}
   if(stageKey === 'l1') return isEdgeStageReported(l1) ? stageBoxes(l1.bbox || row.l1_bbox,'L1 检测框','l1') : []
@@ -274,6 +281,20 @@ function clampNormBox(box:number[]){
   const [x1,y1,x2,y2]=box.map((value)=>Math.max(0,Math.min(1,value)))
   return x2>x1 && y2>y1 ? [x1,y1,x2,y2] : null
 }
+function imageWidthHint(row:any){ return Number(row.frame_width || row.image_width || row.width || 1280) }
+function imageHeightHint(row:any){ return Number(row.frame_height || row.image_height || row.height || 720) }
+function edgeStage(row:any,key:'l1'|'l2'){
+  const stage={ ...(row.sample_judgement?.[key] || {}) }
+  const topBox=row[`${key}_bbox`]
+  const topStatus=row[`${key}_status`]
+  const topClass=row[`${key}_class`]
+  const topConfidence=row[`${key}_confidence`]
+  if(!stage.bbox && asBoxes(topBox).length) stage.bbox=topBox
+  if(!stage.status && topStatus) stage.status=topStatus
+  if(!stage.classes && topClass) stage.classes=[topClass]
+  if(stage.confidence == null && topConfidence != null) stage.confidence=topConfidence
+  return stage
+}
 function boxPayload(raw:any){
   if(Array.isArray(raw)) return { values:raw.slice(0,4).map(Number), format:'' }
   if(raw && typeof raw === 'object'){
@@ -314,8 +335,8 @@ function hasStageEvidence(stage:any){
 function collectionKind(row:any){
   const type=String(row.collection_type || row.collectionType || '').toLowerCase()
   const note=String(row.source_note || row.reason || '').toLowerCase()
-  const l1=row.sample_judgement?.l1 || {}
-  const l2=row.sample_judgement?.l2 || {}
+  const l1=edgeStage(row,'l1')
+  const l2=edgeStage(row,'l2')
   if(row.source_type === 'guardian_forge_historical') return 'legacy'
   const saysL2=['l2_alarm_frame','alarm','confirmed_alarm'].includes(type) || note.includes('l2 已确认') || note.includes('l2 命中')
   const saysL1=type.includes('l1') || note.includes('l1 命中')
@@ -358,15 +379,15 @@ function boxIou(a:any,b:any){
   return inter/(areaA+areaB-inter || 1)
 }
 function edgeVlmWarning(row:any){
-  const l1=row.sample_judgement?.l1 || {}
-  const l2=row.sample_judgement?.l2 || {}
+  const l1=edgeStage(row,'l1')
+  const l2=edgeStage(row,'l2')
   const vlm=row.sample_judgement?.vlm || {}
   const edgeHit=isHazardStage(l1) || isHazardStage(l2)
   const vlmHit=isHazardVlm(vlm)
   const vlmDone=!['pending','not_run','queued','running',''].includes(String(vlm.status || '').toLowerCase())
   if(vlmDone && vlmHit && !edgeHit) return '注意：VLM 判断存在饮品容器，但当前素材没有 L1/L2 命中框佐证；VLM 框只能作为草稿，不能直接作为训练框，必须人工确认/修框。'
   if(vlmDone && edgeHit && !vlmHit) return '注意：L1/L2 命中饮品容器，但 VLM 未确认，疑似误报或 VLM 漏判，需要人工确认。'
-  const width=selectedImageSize.value.width, height=selectedImageSize.value.height
+  const width=selectedImageSize.value.width || imageWidthHint(row), height=selectedImageSize.value.height || imageHeightHint(row)
   const edgeRaw=(asBoxes(l2.bbox).length ? l2.bbox : l1.bbox) || []
   const edgeBox=asBoxes(edgeRaw).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean)[0]
   const vlmBox=asBoxes(vlmBoxCandidates(row, vlm)).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean)[0]
@@ -374,8 +395,8 @@ function edgeVlmWarning(row:any){
   return ''
 }
 function lifecycleStages(row:any){
-  const l1=row.sample_judgement?.l1 || {}
-  const l2=row.sample_judgement?.l2 || {}
+  const l1=edgeStage(row,'l1')
+  const l2=edgeStage(row,'l2')
   const vlm=row.sample_judgement?.vlm || {}
   const human=row.sample_judgement?.human || {}
   const trainingEligible=row.training_eligibility === 'eligible'

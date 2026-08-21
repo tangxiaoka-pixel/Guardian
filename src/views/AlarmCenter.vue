@@ -9,7 +9,7 @@
         <el-table-column prop="alarm_type" label="风险类型" width="150" />
         <el-table-column prop="location" label="点位" min-width="160" />
         <el-table-column prop="alarm_status" label="告警状态" width="120"><template #default="{ row }"><el-tag>{{ alarmStatusText(row.alarm_status) }}</el-tag></template></el-table-column>
-        <el-table-column prop="timestamp" label="timestamp" min-width="220" />
+        <el-table-column label="告警时间" min-width="190"><template #default="{ row }">{{ formatTime(row.timestamp) }}</template></el-table-column>
         <el-table-column prop="feedback_result" label="反馈结果" width="120" />
         <el-table-column label="操作" width="330">
           <template #default="{ row }">
@@ -41,6 +41,10 @@
           <el-descriptions-item label="规则判断">{{ JSON.stringify(selected.rule_result) }}</el-descriptions-item>
           <el-descriptions-item label="客户反馈">{{ selected.feedback_result || '未反馈' }}</el-descriptions-item>
           <el-descriptions-item label="处理记录">{{ selected.human_records.length }}</el-descriptions-item>
+          <el-descriptions-item label="Forge 训练素材" :span="2">
+            <template v-if="selected.forge_samples?.length"><el-button link type="primary" @click="openForge(selected)">查看 {{ selected.forge_samples.length }} 条关联素材</el-button><span class="hint">仅带合规证据图的告警/消除验证帧才会进入训练闭环。</span></template>
+            <span v-else class="hint">该告警尚无可追溯 Forge 素材（无合规图像或未成功入库）。</span>
+          </el-descriptions-item>
         </el-descriptions>
       </div>
       <el-empty v-else-if="!detailLoading" description="告警详情不存在或已被删除" />
@@ -51,9 +55,11 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '../api'
 
 const alarms = ref<any[]>([])
+const router = useRouter()
 const selected = ref<any>(null)
 const visible = ref(false)
 const loading = ref(false)
@@ -86,6 +92,15 @@ function changePage(nextPage: number) {
   page.value = nextPage
   load()
 }
+function formatTime(value: any) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  const parts = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(date)
+  const fields = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value])) as Record<string, string>
+  return `${fields.year}-${fields.month}-${fields.day} ${fields.hour}:${fields.minute}:${fields.second}`
+}
+function openForge(row: any) { router.push({ path: '/forge/materials', query: { source_event_id: row.alarm_id } }) }
 async function open(row: any) {
   selected.value = null
   visible.value = true
@@ -224,4 +239,5 @@ h2 { margin:0; } p { margin:6px 0 0; color:#64748b; }
 .snapshot svg { width:100%; height:100%; display:block; }
 .snapshot span { position:relative; background:#0f172acc; padding:4px 8px; border-radius:6px; }
 .bbox { fill:none; stroke:#f59e0b; stroke-width:7; rx:3; }
+.hint { margin-left:8px; color:#64748b; font-size:12px; }
 </style>

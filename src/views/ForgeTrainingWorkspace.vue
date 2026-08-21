@@ -142,7 +142,7 @@ const pagedDatasets = computed(() => paginate(datasets.value, datasetPage.value)
 const pagedTrainingRuns = computed(() => paginate(trainingRuns.value, trainingPage.value))
 const pagedCandidateModels = computed(() => paginate(candidateModels.value, modelPage.value))
 function paginate(rows:any[], page:number) { return rows.slice((page - 1) * pageSize, page * pageSize) }
-function params(extra:any = {}) { const p:any={ scope:'customer_optimized', scenario:scenario.value, ...extra }; if(customerId.value) p.customer_id=customerId.value; if(siteId.value) p.site_id=siteId.value; return { params:p } }
+function params(extra:any = {}) { const p:any={ scope:'customer_optimized', scenario:scenario.value, ...extra }; const sourceEventId=String(route.query.source_event_id || ''); if(sourceEventId) p.source_event_id=sourceEventId; if(customerId.value) p.customer_id=customerId.value; if(siteId.value) p.site_id=siteId.value; return { params:p } }
 async function loadMaterials(page = materialPage.value) {
   materialPage.value = page
   const { data } = await api.get('/ai-center/material-pool', params({ summary: 1, stage: activeStage.value, page, page_size: pageSize }))

@@ -2186,6 +2186,7 @@ function materialPoolForQuery(url) {
   const customerId = url.searchParams.get('customer_id') || cameraScenarioBindings.find((item) => item.enabled !== false)?.customer_id || ''
   const siteId = url.searchParams.get('site_id') || ''
   const scenario = url.searchParams.get('scenario') || ''
+  const sourceEventId = url.searchParams.get('source_event_id') || ''
   return materialPool().filter((item) => {
     // Keep historical records visible to the owning customer as an isolated
     // audit trail.  They remain blocked by trainingEligibility and cannot be
@@ -2199,6 +2200,7 @@ function materialPoolForQuery(url) {
     return scopeOk
       && (!siteId || scope === 'platform_baseline' || item.site_id === siteId)
       && (!scenario || scenario === 'multi_scenario' || item.scenario === scenario)
+      && (!sourceEventId || item.source_event_id === sourceEventId)
   }).map((item) => {
     const scoped = item.scope_eligibility?.[scope] || { eligible: false, blocked_reasons: ['scope_not_matched'] }
     return {
@@ -6974,7 +6976,12 @@ http.createServer(async (req, res) => {
     if (!alarm || (customerId && alarm.customer_id && alarm.customer_id !== customerId) || (siteId && alarm.site_id && alarm.site_id !== siteId)) {
       return send(res, 404, { detail: 'alarm not found' })
     }
-    return send(res, 200, normalizeAlarmRecord(alarm))
+    const detail = normalizeAlarmRecord(alarm)
+    // 告警与训练素材按 source_event_id 关联。只有携带合规证据图、并成功
+    // 进入 Forge 的告警才会有素材；无图告警不能自动变成训练数据。
+    const forgeSamples = materialPool().filter((item) => item.source_event_id === alarmId && item.customer_id === detail.customer_id)
+      .map((item) => ({ sample_id: item.sample_id, scenario: item.scenario, created_at: item.created_at, training_eligibility: item.training_eligibility || 'blocked' }))
+    return send(res, 200, { ...detail, forge_samples: forgeSamples })
   }
   if (path === '/api/edge-commands' && req.method === 'GET') {
     const brainId = url.searchParams.get('brain_id') || ''

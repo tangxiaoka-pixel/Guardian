@@ -22,27 +22,29 @@
         </div>
         <div class="grid2">
           <el-card shadow="never" header="训练节点在线状态">
-            <el-table :data="summary.centers || []" height="260">
+            <el-table :data="paged('summaryCenters', summary.centers || [])" height="260">
               <el-table-column prop="forgeCenterName" label="节点" min-width="190" />
               <el-table-column prop="forgeCenterType" label="类型" width="150" />
               <el-table-column label="状态" width="100"><template #default="{ row }"><StatusTag :value="row.computedStatus || row.status" /></template></el-table-column>
               <el-table-column prop="tailscaleIp" label="Tailscale" width="150" />
             </el-table>
+            <ListPager list-key="summaryCenters" :total="(summary.centers || []).length" />
           </el-card>
           <el-card shadow="never" header="最近模型版本">
-            <el-table :data="summary.recentModels || []" height="260">
+            <el-table :data="paged('recentModels', summary.recentModels || [])" height="260">
               <el-table-column prop="modelName" label="模型" min-width="220" />
               <el-table-column prop="sourceType" label="来源" width="150" />
               <el-table-column prop="status" label="状态" width="130" />
               <el-table-column prop="map50" label="mAP50" width="90" />
             </el-table>
+            <ListPager list-key="recentModels" :total="(summary.recentModels || []).length" />
           </el-card>
         </div>
       </template>
 
       <template v-else-if="activeTab === 'centers'">
         <Toolbar title="训练中心管理" action="新增训练中心" @action="openCreate('center')" />
-        <el-table :data="centers" stripe>
+        <el-table :data="paged('centers', centers)" stripe>
           <el-table-column prop="forgeCenterName" label="训练中心" min-width="210" />
           <el-table-column prop="forgeCenterType" label="类型" width="160" />
           <el-table-column label="状态" width="100"><template #default="{ row }"><StatusTag :value="row.computedStatus || row.status" /></template></el-table-column>
@@ -60,11 +62,12 @@
             </template>
           </el-table-column>
         </el-table>
+        <ListPager list-key="centers" :total="centers.length" />
       </template>
 
       <template v-else-if="activeTab === 'activation'">
         <Toolbar title="节点注册与激活" action="生成激活码" @action="openCreate('activation')" />
-        <el-table :data="activations" stripe>
+        <el-table :data="paged('activations', activations)" stripe>
           <el-table-column prop="activationCode" label="激活码" min-width="190" />
           <el-table-column prop="forgeCenterName" label="训练中心" min-width="220" />
           <el-table-column label="状态" width="110"><template #default="{ row }"><StatusTag :value="row.status" /></template></el-table-column>
@@ -72,12 +75,13 @@
           <el-table-column prop="activatedByNodeId" label="激活节点" min-width="180" />
           <el-table-column label="操作" width="160"><template #default="{ row }"><el-button size="small" @click="copy(row.activationCode)">复制</el-button><el-button size="small" type="danger" @click="revokeActivation(row)">禁用</el-button></template></el-table-column>
         </el-table>
+        <ListPager list-key="activations" :total="activations.length" />
       </template>
 
       <template v-else-if="activeTab === 'projectBindings'">
         <Toolbar title="项目绑定" action="新增项目绑定" @action="openCreate('projectBinding')" />
         <el-alert type="info" :closable="false" show-icon title="规则：project_forge_node 只能 exclusive 且只能绑定一个项目；platform_forge 可 shared/delegated 绑定多个项目。" />
-        <el-table :data="projectBindings" stripe>
+        <el-table :data="paged('projectBindings', projectBindings)" stripe>
           <el-table-column prop="forgeCenterName" label="训练中心" min-width="220" />
           <el-table-column prop="forgeCenterType" label="类型" width="160" />
           <el-table-column prop="customerName" label="客户" width="160" />
@@ -87,11 +91,12 @@
           <el-table-column label="状态" width="100"><template #default="{ row }"><StatusTag :value="row.status" /></template></el-table-column>
           <el-table-column label="操作" width="120"><template #default="{ row }"><el-button size="small" type="danger" @click="deleteProjectBinding(row)">解除</el-button></template></el-table-column>
         </el-table>
+        <ListPager list-key="projectBindings" :total="projectBindings.length" />
       </template>
 
       <template v-else-if="activeTab === 'deviceBindings'">
         <Toolbar title="设备绑定" action="新增设备绑定" @action="openCreate('deviceBinding')" />
-        <el-table :data="deviceBindings" stripe>
+        <el-table :data="paged('deviceBindings', deviceBindings)" stripe>
           <el-table-column prop="forgeCenterName" label="训练中心" min-width="220" />
           <el-table-column prop="projectName" label="项目" min-width="180" />
           <el-table-column prop="edgeDeviceName" label="设备" min-width="190" />
@@ -102,11 +107,12 @@
           <el-table-column label="下发" width="90"><template #default="{ row }"><el-tag :type="row.modelDeployAllowed ? 'success' : 'info'">{{ row.modelDeployAllowed ? '允许' : '禁止' }}</el-tag></template></el-table-column>
           <el-table-column label="操作" width="290"><template #default="{ row }"><el-button size="small" @click="openEditDeviceBinding(row)">配置算法</el-button><el-button size="small" @click="patchDeviceBinding(row, { uploadAllowed: !row.uploadAllowed })">切换上传</el-button><el-button size="small" type="danger" @click="deleteDeviceBinding(row)">解除</el-button></template></el-table-column>
         </el-table>
+        <ListPager list-key="deviceBindings" :total="deviceBindings.length" />
       </template>
 
       <template v-else-if="activeTab === 'samplePolicies'">
         <Toolbar title="样本策略中心" action="新增样本策略" @action="openCreate('samplePolicy')" />
-        <el-table :data="samplePolicies" stripe>
+        <el-table :data="paged('samplePolicies', samplePolicies)" stripe>
           <el-table-column prop="customerName" label="客户" width="160" />
           <el-table-column prop="projectName" label="项目" min-width="180" />
           <el-table-column label="策略" min-width="330">
@@ -121,11 +127,12 @@
           <el-table-column prop="consentStatus" label="授权" width="110" />
           <el-table-column label="风险提示" min-width="240"><template #default="{ row }"><span class="risk">{{ policyRisk(row) }}</span></template></el-table-column>
         </el-table>
+        <ListPager list-key="samplePolicies" :total="samplePolicies.length" />
       </template>
 
       <template v-else-if="activeTab === 'modelVersions'">
         <Toolbar title="模型版本中心" action="手动新增模型" @action="openCreate('modelVersion')" />
-        <el-table :data="modelVersions" stripe>
+        <el-table :data="paged('modelVersions', modelVersions)" stripe>
           <el-table-column prop="modelName" label="模型名称" min-width="250" />
           <el-table-column prop="version" label="版本" width="90" />
           <el-table-column prop="sourceType" label="来源" width="160" />
@@ -137,11 +144,12 @@
           <el-table-column label="状态" width="120"><template #default="{ row }"><StatusTag :value="row.status" /></template></el-table-column>
           <el-table-column label="操作" width="250"><template #default="{ row }"><el-button size="small" @click="markRecommended(row)">推荐</el-button><el-button size="small" type="primary" @click="createApproval(row)">发起发布</el-button><el-button size="small" type="danger" @click="archiveModel(row)">归档</el-button></template></el-table-column>
         </el-table>
+        <ListPager list-key="modelVersions" :total="modelVersions.length" />
       </template>
 
       <template v-else-if="activeTab === 'releaseApprovals'">
         <Toolbar title="模型发布审批" action="创建发布申请" @action="openCreate('approval')" />
-        <el-table :data="releaseApprovals" stripe>
+        <el-table :data="paged('releaseApprovals', releaseApprovals)" stripe>
           <el-table-column prop="modelName" label="模型" min-width="240" />
           <el-table-column prop="releaseScope" label="范围" width="180" />
           <el-table-column prop="releaseType" label="类型" width="100" />
@@ -149,11 +157,12 @@
           <el-table-column label="状态" width="120"><template #default="{ row }"><StatusTag :value="row.approvalStatus" /></template></el-table-column>
           <el-table-column label="操作" width="180"><template #default="{ row }"><el-button size="small" type="success" @click="approve(row)">通过</el-button><el-button size="small" type="danger" @click="reject(row)">驳回</el-button></template></el-table-column>
         </el-table>
+        <ListPager list-key="releaseApprovals" :total="releaseApprovals.length" />
       </template>
 
       <template v-else-if="activeTab === 'releases'">
         <Toolbar title="发布与回滚记录" action="刷新记录" @action="loadReleases" />
-        <el-table :data="releases" stripe>
+        <el-table :data="paged('releases', releases)" stripe>
           <el-table-column prop="modelName" label="模型" min-width="250" />
           <el-table-column prop="version" label="版本" width="90" />
           <el-table-column prop="releaseScope" label="范围" width="180" />
@@ -162,11 +171,12 @@
           <el-table-column prop="releasedAt" label="发布时间" min-width="190" />
           <el-table-column label="操作" width="120"><template #default="{ row }"><el-button size="small" @click="rollback(row)">回滚</el-button></template></el-table-column>
         </el-table>
+        <ListPager list-key="releases" :total="releases.length" />
       </template>
 
       <template v-else-if="activeTab === 'heartbeats'">
         <Toolbar title="节点心跳监控" />
-        <el-table :data="heartbeats" stripe>
+        <el-table :data="paged('heartbeats', heartbeats)" stripe>
           <el-table-column prop="forgeCenterName" label="节点" min-width="220" />
           <el-table-column label="状态" width="110"><template #default="{ row }"><StatusTag :value="row.nodeStatus" /></template></el-table-column>
           <el-table-column prop="tailscaleIp" label="Tailscale" width="150" />
@@ -176,11 +186,12 @@
           <el-table-column prop="reportedAt" label="上报时间" min-width="190" />
           <el-table-column prop="lastError" label="异常" min-width="180" />
         </el-table>
+        <ListPager list-key="heartbeats" :total="heartbeats.length" />
       </template>
 
       <template v-else-if="activeTab === 'syncLogs'">
         <Toolbar title="同步接口日志" />
-        <el-table :data="syncLogs" stripe>
+        <el-table :data="paged('syncLogs', syncLogs)" stripe>
           <el-table-column prop="nodeName" label="节点" min-width="220" />
           <el-table-column prop="actionType" label="动作" width="170" />
           <el-table-column label="状态" width="100"><template #default="{ row }"><StatusTag :value="row.status" /></template></el-table-column>
@@ -189,6 +200,7 @@
           <el-table-column prop="errorMessage" label="错误" min-width="180" />
           <el-table-column prop="createdAt" label="时间" min-width="190" />
         </el-table>
+        <ListPager list-key="syncLogs" :total="syncLogs.length" />
       </template>
     </el-card>
 
@@ -255,7 +267,7 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
+import { ElMessage, ElMessageBox, ElPagination, ElTag } from 'element-plus'
 import api from '../api'
 
 const route = useRoute()
@@ -294,6 +306,25 @@ const dialog = reactive({ visible: false, kind: '', title: '' })
 const form = reactive<any>({})
 const centerTypes = ['platform_forge', 'project_forge_node', 'customer_private', 'cloud_gpu_node']
 const deviceRoles = ['l1_device', 'l2_gateway', 'camera', 'training_node']
+const listPageSize = 20
+const listPages = reactive<Record<string, number>>({})
+function paged(key: string, rows: any[]) {
+  const page = listPages[key] || 1
+  return rows.slice((page - 1) * listPageSize, page * listPageSize)
+}
+const ListPager = defineComponent({
+  props: { listKey: { type: String, required: true }, total: { type: Number, required: true } },
+  setup(props) {
+    return () => h('div', { class: 'list-pager', style: { display: 'flex', justifyContent: 'flex-end', marginTop: '14px' } }, [h(ElPagination, {
+      background: true,
+      currentPage: listPages[props.listKey] || 1,
+      pageSize: listPageSize,
+      total: props.total,
+      layout: 'total, prev, pager, next',
+      'onUpdate:currentPage': (page: number) => { listPages[props.listKey] = page },
+    })])
+  },
+})
 
 const Toolbar = defineComponent({
   props: { title: String, action: String },

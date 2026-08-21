@@ -2,7 +2,7 @@
   <section class="page">
     <header><h2>告警中心</h2><p>告警是 AI / IoT / 人工上报产生的原始风险信号；这里负责看见风险、确认风险。</p></header>
     <el-card class="panel" shadow="never">
-      <el-table :data="alarms" stripe>
+      <el-table v-loading="loading" :data="alarms" stripe>
         <el-table-column prop="alarm_id" label="alarm" width="110" />
         <el-table-column prop="event_id" label="event" width="110" />
         <el-table-column prop="channel_id" label="channel" width="90" />
@@ -20,8 +20,12 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="pagination">
+        <el-pagination background layout="total, prev, pager, next" :current-page="page" :page-size="pageSize" :total="total" @current-change="changePage" />
+      </div>
     </el-card>
     <el-dialog v-model="visible" title="告警详情" width="820px">
+      <div v-loading="detailLoading" class="detail-wrap">
       <div v-if="selected" class="detail">
         <div class="snapshot">
           <svg v-if="selected.snapshot || selected.snapshot_url" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid meet" aria-label="告警关键帧">
@@ -39,6 +43,8 @@
           <el-descriptions-item label="处理记录">{{ selected.human_records.length }}</el-descriptions-item>
         </el-descriptions>
       </div>
+      <el-empty v-else-if="!detailLoading" description="告警详情不存在或已被删除" />
+      </div>
     </el-dialog>
   </section>
 </template>
@@ -50,13 +56,49 @@ import api from '../api'
 const alarms = ref<any[]>([])
 const selected = ref<any>(null)
 const visible = ref(false)
+const loading = ref(false)
+const detailLoading = ref(false)
+const page = ref(1)
+const pageSize = 20
+const total = ref(0)
 const customerId = localStorage.getItem('guardian_customer_id') || ''
 const siteId = localStorage.getItem('guardian_site_id') || ''
 async function load() {
-  const rows = (await api.get('/alarms', { params: { customer_id: customerId, site_id: siteId } })).data
-  alarms.value = rows.filter((item: any) => !item.site_id || item.site_id === siteId)
+  loading.value = true
+  try {
+    const { data } = await api.get('/alarms', {
+      params: { customer_id: customerId, site_id: siteId, summary: 1, page: page.value, page_size: pageSize },
+    })
+    // Compatibility with an old API during a rolling deployment.
+    if (Array.isArray(data)) {
+      alarms.value = data.filter((item: any) => !item.site_id || item.site_id === siteId)
+      total.value = alarms.value.length
+    } else {
+      alarms.value = data.items || []
+      total.value = Number(data.total || 0)
+      page.value = Number(data.page || page.value)
+    }
+  } finally {
+    loading.value = false
+  }
 }
-function open(row: any) { selected.value = row; visible.value = true }
+function changePage(nextPage: number) {
+  page.value = nextPage
+  load()
+}
+async function open(row: any) {
+  selected.value = null
+  visible.value = true
+  detailLoading.value = true
+  try {
+    const { data } = await api.get('/alarms/' + encodeURIComponent(row.alarm_id), {
+      params: { customer_id: customerId, site_id: siteId },
+    })
+    selected.value = data
+  } finally {
+    detailLoading.value = false
+  }
+}
 function parseJsonish(value: any, fallback: any = null): any {
   if (Array.isArray(value) || (value && typeof value === 'object')) return value
   if (typeof value === 'string' && value.trim()) {
@@ -66,14 +108,30 @@ function parseJsonish(value: any, fallback: any = null): any {
 }
 function normalizeBox(value: any): number[] {
   const parsed = parseJsonish(value, value)
-  if (!Array.isArray(parsed) || parsed.length < 4) return []
-  const box = parsed.slice(0, 4).map(Number)
+  const rawBox = Array.isArray(parsed)
+    ? parsed
+    : parsed?.bbox || parsed?.box || parsed?.xyxy || parsed?.bbox_xyxy || parsed?.bbox_norm || parsed?.bbox_xyxy_norm || parsed?.xywh
+  if (!Array.isArray(rawBox) || rawBox.length < 4) return []
+  const box = rawBox.slice(0, 4).map(Number)
   return box.every(Number.isFinite) && box[2] > box[0] && box[3] > box[1] ? box : []
 }
 function boxesFromDetections(value: any): number[][] {
   const parsed = parseJsonish(value, value)
-  if (!Array.isArray(parsed)) return []
-  return parsed.map((item: any) => normalizeBox(item?.bbox || item?.box || item?.xyxy || item)).filter((box: number[]) => box.length === 4)
+  if (parsed == null || parsed === '') return []
+  if (Array.isArray(parsed)) {
+    if (parsed.length >= 4 && parsed.slice(0, 4).every((item: any) => Number.isFinite(Number(item))) && typeof parsed[0] !== 'object') {
+      const box = normalizeBox(parsed)
+      return box.length === 4 ? [box] : []
+    }
+    return parsed.flatMap((item: any) => boxesFromDetections(item)).filter((box: number[]) => box.length === 4)
+  }
+  if (parsed && typeof parsed === 'object') {
+    const grouped = parsed.detections || parsed.targets || parsed.boxes || parsed.bboxes || parsed.items
+    if (grouped) return boxesFromDetections(grouped)
+    const box = normalizeBox(parsed)
+    return box.length === 4 ? [box] : []
+  }
+  return []
 }
 function boxIou(a: number[], b: number[]) {
   const x1 = Math.max(a[0], b[0])
@@ -107,8 +165,8 @@ function isResolved(row: any) {
 function targetBoxes(row: any): number[][] {
   if (isResolved(row)) return []
   const boxes = [
-    ...boxesFromDetections(row?.targets),
     ...boxesFromDetections(row?.current_targets),
+    ...boxesFromDetections(row?.targets),
     ...boxesFromDetections(row?.l2_detections || row?.l2Detections),
     ...boxesFromDetections(row?.l2_output?.detections || row?.l2_output?.targets),
     ...boxesFromDetections(row?.l1_detections || row?.l1Detections),
@@ -156,6 +214,8 @@ onMounted(load)
 .page { display:flex; flex-direction:column; gap:14px; }
 h2 { margin:0; } p { margin:6px 0 0; color:#64748b; }
 .panel { border-radius:8px; border:1px solid #dbe4ef; }
+.pagination { display:flex; justify-content:flex-end; padding-top:16px; }
+.detail-wrap { min-height:260px; }
 .detail { display:grid; grid-template-columns:300px 1fr; gap:16px; }
 .snapshot { min-height:220px; border-radius:8px; background:#1e293b; color:#cbd5e1; display:grid; place-items:center; position:relative; overflow:hidden; }
 .snapshot svg { width:100%; height:100%; display:block; }

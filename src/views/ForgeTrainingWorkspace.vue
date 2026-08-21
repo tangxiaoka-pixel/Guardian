@@ -20,14 +20,13 @@
 
     <template v-if="activeStage === 'materials'">
       <div class="metrics">
-        <Metric label="合规素材" :value="trustedRows.length" hint="完整 ROI、KKOS 本地脱敏、授权来源齐全" />
-        <Metric label="待 VLM 审计" :value="pendingVlm.length" hint="系统自动提交，不需要手动逐张运行" />
-        <Metric label="历史隔离" :value="legacyRows.length" hint="仅保留追溯，不可审计、审核或训练" danger />
+        <Metric label="合规素材" :value="materialMetrics.trusted || 0" hint="完整 ROI、KKOS 本地脱敏、授权来源齐全" />
+        <Metric label="待 VLM 审计" :value="materialMetrics.pending_vlm || 0" hint="系统自动提交，不需要手动逐张运行" />
+        <Metric label="历史隔离" :value="materialMetrics.legacy || 0" hint="仅保留追溯，不可审计、审核或训练" danger />
       </div>
       <el-card shadow="never" class="panel">
         <template #header><div class="panel-head"><b>素材收集</b><span>现场事件级去重后入库；云端不保存原始未脱敏图。</span></div></template>
         <el-table :data="materials" v-loading="loading" height="560" row-key="sample_id">
-          <el-table-column label="图片" width="108"><template #default="{ row }"><img class="thumb clickable" :src="asset(row.thumbnail_url)" @click="openDetail(row)" @error="hideImage" /></template></el-table-column>
           <el-table-column prop="sample_id" label="素材 ID" min-width="220" show-overflow-tooltip />
           <el-table-column prop="scenario" label="算法 / 场景" min-width="190" />
           <el-table-column label="采集时间" min-width="180"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
@@ -38,15 +37,16 @@
           <el-table-column label="当前阶段" width="150"><template #default="{ row }"><el-tag :type="stageType(row)">{{ stageLabel(row) }}</el-tag></template></el-table-column>
           <el-table-column label="操作" width="90" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openDetail(row)">详情</el-button></template></el-table-column>
         </el-table>
+        <div class="pager"><el-pagination v-model:current-page="materialPage" :page-size="pageSize" :total="materialTotal" layout="total, prev, pager, next" @current-change="loadMaterials" /></div>
       </el-card>
     </template>
 
     <template v-else-if="activeStage === 'vlm'">
-      <div class="metrics"><Metric label="待审计" :value="pendingVlm.length" /><Metric label="已完成" :value="completedVlm.length" /><Metric label="待人工确认" :value="needHuman.length" hint="仅 uncertain、低置信或冲突样本进入" /></div>
+      <div class="metrics"><Metric label="待审计" :value="materialMetrics.pending_vlm || 0" /><Metric label="已完成" :value="materialMetrics.completed_vlm || 0" /><Metric label="待人工确认" :value="materialMetrics.need_human || 0" hint="仅 uncertain、低置信或冲突样本进入" /></div>
       <el-alert type="success" :closable="false" show-icon title="自动 VLM 队列已启用" description="合规新素材入库后自动发送 Forge VLM；positive/negative 生成标注草稿，uncertain 与冲突结果才送人工审核。VLM 不参与现场即时报警。" />
       <el-card shadow="never" class="panel"><template #header><div class="panel-head"><b>VLM 审计队列</b><span>使用算法绑定的审计提示词，不需要按图片切换规则。</span></div></template>
         <el-table :data="vlmRows" v-loading="loading" height="560">
-          <el-table-column label="素材" min-width="220"><template #default="{ row }"><div class="sample-cell"><img class="thumb clickable" :src="asset(row.thumbnail_url)" @click="openDetail(row, 'vlm')" @error="hideImage" /><span>{{ row.sample_id }}</span></div></template></el-table-column>
+          <el-table-column prop="sample_id" label="素材 ID" min-width="220" show-overflow-tooltip />
           <el-table-column label="审计模型" width="180"><template #default="{ row }">{{ auditModel(row) }}</template></el-table-column>
           <el-table-column label="结论" width="130"><template #default="{ row }"><el-tag :type="decisionType(row.vlm_decision)">{{ decisionLabel(row.vlm_decision) }}</el-tag></template></el-table-column>
           <el-table-column label="置信度" width="110"><template #default="{ row }">{{ score(row) }}</template></el-table-column>
@@ -54,38 +54,42 @@
           <el-table-column label="审计完成时间" min-width="180"><template #default="{ row }">{{ formatTime(auditTime(row)) }}</template></el-table-column>
           <el-table-column label="操作" width="90" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openDetail(row, 'vlm')">看审计图</el-button></template></el-table-column>
         </el-table>
+        <div class="pager"><el-pagination v-model:current-page="materialPage" :page-size="pageSize" :total="materialTotal" layout="total, prev, pager, next" @current-change="loadMaterials" /></div>
       </el-card>
     </template>
 
     <template v-else-if="activeStage === 'review'">
-      <div class="metrics"><Metric label="待人工审核" :value="needHuman.length" /><Metric label="已确认正样本" :value="confirmedPositive.length" /><Metric label="已确认负样本" :value="confirmedNegative.length" /></div>
+      <div class="metrics"><Metric label="待人工审核" :value="materialMetrics.need_human || 0" /><Metric label="已确认正样本" :value="materialMetrics.confirmed_positive || 0" /><Metric label="已确认负样本" :value="materialMetrics.confirmed_negative || 0" /></div>
       <el-card shadow="never" class="panel"><template #header><div class="panel-head"><b>人工审核</b><span>只处理 VLM 不确定、低置信或 L1/L2 与 VLM 结论冲突的合规素材。</span></div></template>
         <el-table :data="reviewRows" v-loading="loading" height="560">
-          <el-table-column label="图片" width="108"><template #default="{ row }"><img class="thumb clickable" :src="asset(row.thumbnail_url)" @click="openDetail(row)" @error="hideImage" /></template></el-table-column>
           <el-table-column prop="sample_id" label="素材 ID" min-width="220" show-overflow-tooltip />
           <el-table-column label="VLM 建议" min-width="190"><template #default="{ row }">{{ row.sample_judgement?.vlm?.suggested_category || '等待审计结论' }}</template></el-table-column>
           <el-table-column label="进入原因" min-width="300"><template #default="{ row }">{{ row.sample_judgement?.vlm?.reason || row.blocked_reasons?.join('、') || '需要人工确认' }}</template></el-table-column>
           <el-table-column label="当前状态" width="160"><template #default="{ row }"><el-tag>{{ humanLabel(row) }}</el-tag></template></el-table-column>
           <el-table-column label="操作" width="90"><template #default="{ row }"><el-button link type="primary" @click="openDetail(row)">查看</el-button></template></el-table-column>
         </el-table>
+        <div class="pager"><el-pagination v-model:current-page="materialPage" :page-size="pageSize" :total="materialTotal" layout="total, prev, pager, next" @current-change="loadMaterials" /></div>
       </el-card>
     </template>
 
     <template v-else-if="activeStage === 'datasets'">
-      <div class="metrics"><Metric label="可入训练素材" :value="eligibleRows.length" hint="已完成 VLM 与人工确认" /><Metric label="正样本" :value="confirmedPositive.length" /><Metric label="困难负样本" :value="confirmedNegative.length" /></div>
+      <div class="metrics"><Metric label="可入训练素材" :value="materialMetrics.eligible || 0" hint="已完成 VLM 与人工确认" /><Metric label="正样本" :value="materialMetrics.confirmed_positive || 0" /><Metric label="困难负样本" :value="materialMetrics.confirmed_negative || 0" /></div>
       <el-alert type="warning" :closable="false" show-icon title="冻结后才可训练" description="创建训练数据集会固化素材清单、类别分布、采集时间范围与数据版本；训练过程不会受后续新增素材影响。" />
-      <el-card shadow="never" class="panel"><template #header><div class="panel-head"><b>训练数据集版本</b><el-button type="primary" :disabled="eligibleRows.length === 0" @click="buildDataset">创建数据集版本</el-button></div></template>
-        <el-table :data="datasets" v-loading="loading" height="520"><el-table-column prop="dataset_version" label="数据集版本" min-width="260" /><el-table-column prop="scenario" label="场景" min-width="180" /><el-table-column prop="sample_count" label="素材数" width="110" /><el-table-column label="创建时间" min-width="190"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column><el-table-column label="状态" width="140"><template #default><el-tag type="success">已冻结</el-tag></template></el-table-column></el-table>
+      <el-card shadow="never" class="panel"><template #header><div class="panel-head"><b>训练数据集版本</b><el-button type="primary" :disabled="eligibleRows === 0" @click="buildDataset">创建数据集版本</el-button></div></template>
+        <el-table :data="pagedDatasets" v-loading="loading" height="520"><el-table-column prop="dataset_version" label="数据集版本" min-width="260" /><el-table-column prop="scenario" label="场景" min-width="180" /><el-table-column prop="sample_count" label="素材数" width="110" /><el-table-column label="创建时间" min-width="190"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column><el-table-column label="状态" width="140"><template #default><el-tag type="success">已冻结</el-tag></template></el-table-column></el-table>
+        <div class="pager"><el-pagination v-model:current-page="datasetPage" :page-size="pageSize" :total="datasets.length" layout="total, prev, pager, next" /></div>
       </el-card>
     </template>
 
     <template v-else>
       <div class="metrics"><Metric label="训练任务" :value="trainingRuns.length" /><Metric label="候选模型" :value="candidateModels.length" /><Metric label="评估报告" :value="evaluations.length" /></div>
       <el-card shadow="never" class="panel"><template #header><div class="panel-head"><b>训练与发布</b><span>训练 → 离线评估 → 人工批准 → 灰度下发 → 生效回报；任一步失败均可回滚。</span></div></template>
-        <el-table :data="trainingRuns" height="260"><el-table-column prop="train_run_id" label="训练任务" min-width="220" /><el-table-column prop="dataset_version" label="数据集版本" min-width="220" /><el-table-column prop="status" label="状态" width="130" /><el-table-column label="发起时间" min-width="190"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column><el-table-column prop="output_model_id" label="输出模型" min-width="220" /></el-table>
+        <el-table :data="pagedTrainingRuns" height="260"><el-table-column prop="train_run_id" label="训练任务" min-width="220" /><el-table-column prop="dataset_version" label="数据集版本" min-width="220" /><el-table-column prop="status" label="状态" width="130" /><el-table-column label="发起时间" min-width="190"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column><el-table-column prop="output_model_id" label="输出模型" min-width="220" /></el-table>
+        <div class="pager"><el-pagination v-model:current-page="trainingPage" :page-size="pageSize" :total="trainingRuns.length" layout="total, prev, pager, next" /></div>
       </el-card>
       <el-card shadow="never" class="panel"><template #header><div class="panel-head"><b>候选模型与发布门禁</b><span>需查看事件级召回、空桌误报、链路成功率与灰度设备回报。</span></div></template>
-        <el-table :data="candidateModels" height="260"><el-table-column prop="model_id" label="模型 ID" min-width="240" /><el-table-column prop="scenario" label="场景" min-width="180" /><el-table-column prop="status" label="状态" width="120" /><el-table-column label="更新时间" min-width="190"><template #default="{ row }">{{ formatTime(row.updated_at || row.created_at) }}</template></el-table-column></el-table>
+        <el-table :data="pagedCandidateModels" height="260"><el-table-column prop="model_id" label="模型 ID" min-width="240" /><el-table-column prop="scenario" label="场景" min-width="180" /><el-table-column prop="status" label="状态" width="120" /><el-table-column label="更新时间" min-width="190"><template #default="{ row }">{{ formatTime(row.updated_at || row.created_at) }}</template></el-table-column></el-table>
+        <div class="pager"><el-pagination v-model:current-page="modelPage" :page-size="pageSize" :total="candidateModels.length" layout="total, prev, pager, next" /></div>
       </el-card>
     </template>
 
@@ -123,24 +127,30 @@ const customerId = ref(localStorage.getItem('guardian_customer_id') || '')
 const siteId = ref(localStorage.getItem('guardian_site_id') || '')
 const scenario = ref('desk_drink_intrusion')
 const materials = ref<any[]>([]), datasets = ref<any[]>([]), trainingRuns = ref<any[]>([]), evaluations = ref<any[]>([]), models = ref<any[]>([])
+const materialPage = ref(1), materialTotal = ref(0), materialMetrics = ref<any>({}), pageSize = 20
+const datasetPage = ref(1), trainingPage = ref(1), modelPage = ref(1)
 const detailVisible = ref(false), selected = ref<any>(null), selectedImageSize = ref({ width: 0, height: 0 }), activeDetailStage = ref('raw')
 const detailImageRef = ref<HTMLImageElement | null>(null)
 const activeStage = computed(() => String(route.meta.forgeStage || 'materials'))
 const pages:any = { materials:{ title:'Forge 训练中心 · 素材收集', description:'查看现场采集、隐私处理、去重与入库状态。', note:'只有带可信 KKOS 脱敏与授权来源的完整 ROI 图，才会进入后续流程。' }, vlm:{ title:'Forge 训练中心 · VLM 审计', description:'自动审计合规素材，并生成可追溯的标注草稿。', note:'VLM 使用该算法已配置的提示词；不干预现场 L1/L2 即时报警。' }, review:{ title:'Forge 训练中心 · 人工审核', description:'只处理自动系统无法可靠确认的少量素材。', note:'人工审核确认的是训练标签，不改变已经发生的现场报警。' }, datasets:{ title:'Forge 训练中心 · 训练数据集', description:'把已确认素材冻结为可复现的数据集版本。', note:'历史隔离素材及未确认素材不允许加入数据集。' }, release:{ title:'Forge 训练中心 · 训练与发布', description:'管理训练任务、评估门禁、灰度与回滚。', note:'模型必须经过离线评估和灰度生效回报，才算正式发布。' } }
 const stage = computed(() => pages[activeStage.value] || pages.materials)
-const trustedRows = computed(() => materials.value.filter((r:any) => r.privacy_status === 'privacy_processed' && r.source_type !== 'guardian_forge_historical'))
-const legacyRows = computed(() => materials.value.filter((r:any) => r.source_type === 'guardian_forge_historical'))
-const pendingVlm = computed(() => trustedRows.value.filter((r:any) => ['not_run','pending'].includes(r.sample_judgement?.vlm?.status || r.vlm_status)))
-const completedVlm = computed(() => trustedRows.value.filter((r:any) => !['not_run','pending'].includes(r.sample_judgement?.vlm?.status || r.vlm_status)))
-const needHuman = computed(() => trustedRows.value.filter((r:any) => needsHuman(r)))
-const confirmedPositive = computed(() => trustedRows.value.filter((r:any) => r.sample_category === 'confirmed_positive'))
-const confirmedNegative = computed(() => trustedRows.value.filter((r:any) => ['confirmed_hard_negative','background_negative','confirmed_boundary'].includes(r.sample_category)))
-const eligibleRows = computed(() => trustedRows.value.filter((r:any) => r.training_eligibility === 'eligible'))
-const vlmRows = computed(() => [...completedVlm.value, ...pendingVlm.value].map((r:any) => ({ ...r, teacher_model: auditModel(r), vlm_decision: r.sample_judgement?.vlm?.status || 'pending', reason: r.sample_judgement?.vlm?.reason || '等待自动审计' })))
-const reviewRows = computed(() => needHuman.value)
+const eligibleRows = computed(() => Number(materialMetrics.value.eligible || 0))
+const vlmRows = computed(() => materials.value.map((r:any) => ({ ...r, teacher_model: auditModel(r), vlm_decision: r.sample_judgement?.vlm?.status || r.vlm_status || 'pending', reason: r.sample_judgement?.vlm?.reason || '等待自动审计' })))
+const reviewRows = computed(() => materials.value)
 const candidateModels = computed(() => models.value.filter((m:any) => m.status === 'candidate'))
-function params() { const p:any={ scope:'customer_optimized', scenario:scenario.value }; if(customerId.value) p.customer_id=customerId.value; if(siteId.value) p.site_id=siteId.value; return { params:p } }
-async function refresh(){ loading.value=true; try { const [m,d,t,e,mo] = await Promise.all([api.get('/ai-center/material-pool',params()),api.get('/datasets',{params:{scope:'customer',customer_id:customerId.value}}),api.get('/training-runs',{params:{customer_id:customerId.value}}),api.get('/evaluations'),api.get('/models')]); materials.value=m.data||[]; datasets.value=d.data||[]; trainingRuns.value=t.data||[]; evaluations.value=e.data||[]; models.value=mo.data||[] } catch(err:any){ ElMessage.error(err?.response?.data?.detail || '加载 Forge 数据失败') } finally { loading.value=false } }
+const pagedDatasets = computed(() => paginate(datasets.value, datasetPage.value))
+const pagedTrainingRuns = computed(() => paginate(trainingRuns.value, trainingPage.value))
+const pagedCandidateModels = computed(() => paginate(candidateModels.value, modelPage.value))
+function paginate(rows:any[], page:number) { return rows.slice((page - 1) * pageSize, page * pageSize) }
+function params(extra:any = {}) { const p:any={ scope:'customer_optimized', scenario:scenario.value, ...extra }; if(customerId.value) p.customer_id=customerId.value; if(siteId.value) p.site_id=siteId.value; return { params:p } }
+async function loadMaterials(page = materialPage.value) {
+  materialPage.value = page
+  const { data } = await api.get('/ai-center/material-pool', params({ summary: 1, stage: activeStage.value, page, page_size: pageSize }))
+  materials.value = data.items || []
+  materialTotal.value = Number(data.total || 0)
+  materialMetrics.value = data.metrics || {}
+}
+async function refresh(){ loading.value=true; try { materialPage.value=1; const [,d,t,e,mo] = await Promise.all([loadMaterials(1),api.get('/datasets',{params:{scope:'customer',customer_id:customerId.value}}),api.get('/training-runs',{params:{customer_id:customerId.value}}),api.get('/evaluations'),api.get('/models')]); datasets.value=d.data||[]; trainingRuns.value=t.data||[]; evaluations.value=e.data||[]; models.value=mo.data||[] } catch(err:any){ ElMessage.error(err?.response?.data?.detail || '加载 Forge 数据失败') } finally { loading.value=false } }
 async function buildDataset(){ try { const { data } = await api.post('/ai-lifecycle/datasets/build-customer',{ customer_id:customerId.value, site_id:siteId.value, scenario:scenario.value }); ElMessage.success(`已冻结数据集 ${data.dataset_version}`); refresh() } catch(err:any){ ElMessage.error(err?.response?.data?.detail || '无法创建数据集') } }
 function asset(url:string){ return apiAssetUrl(url || '') }
 function auditModel(_row:any){ return 'guardian-vlm' }
@@ -160,7 +170,20 @@ function refreshImageSizeFromDom(){
   img.style.visibility='visible'
   if(img.naturalWidth && img.naturalHeight) selectedImageSize.value={ width:img.naturalWidth, height:img.naturalHeight }
 }
-function openDetail(row:any, stage='raw'){ selected.value=row; activeDetailStage.value=stage; selectedImageSize.value={width:0,height:0}; detailVisible.value=true; nextTick(refreshImageSizeFromDom) }
+async function openDetail(row:any, stage='raw'){
+  detailVisible.value=true
+  selected.value=null
+  activeDetailStage.value=stage
+  selectedImageSize.value={width:0,height:0}
+  try {
+    const { data } = await api.get(`/ai-center/material-pool/${encodeURIComponent(row.sample_id)}`, params())
+    selected.value=data
+    nextTick(refreshImageSizeFromDom)
+  } catch(err:any) {
+    detailVisible.value=false
+    ElMessage.error(err?.response?.data?.detail || '加载素材详情失败')
+  }
+}
 function selectDetailStage(stageKey:string){ activeDetailStage.value=stageKey; selectedImageSize.value={width:0,height:0}; nextTick(refreshImageSizeFromDom) }
 function recordImageSize(event:any){ event.target.style.visibility='visible'; selectedImageSize.value={ width:event.target.naturalWidth || 0, height:event.target.naturalHeight || 0 } }
 function needsHuman(r:any){
@@ -207,16 +230,29 @@ function drawableBoxesForStage(row:any, stageKey:string){
   const l2=edgeStage(row,'l2')
   const vlm=row.sample_judgement?.vlm || {}
   const human=row.sample_judgement?.human || {}
-  if(stageKey === 'l1') return isEdgeStageReported(l1) ? stageBoxes(l1.bbox || row.l1_bbox,'L1 检测框','l1') : []
-  if(stageKey === 'l2') return isEdgeStageReported(l2) ? stageBoxes(l2.bbox || row.l2_bbox,'L2 检测框','l2') : []
+  if(stageKey === 'l1') return isEdgeStageReported(l1) ? stageBoxes(l1.detections || row.l1_detections || row.l1Detections || l1.bbox || row.l1_bbox,'L1 检测框','l1') : []
+  if(stageKey === 'l2') return isEdgeStageReported(l2) ? stageBoxes(l2.detections || row.l2_detections || row.l2Detections || l2.bbox || row.l2_bbox,'L2 检测框','l2') : []
   if(stageKey === 'vlm') return stageBoxes(vlmBoxCandidates(row, vlm),'VLM 审计框','vlm')
   if(stageKey === 'human') return stageBoxes(human.bbox || row.human_bbox || row.human_label_bbox_norm,'人工确认框','human')
   if(stageKey === 'training') return stageBoxes(human.bbox || row.human_bbox || row.human_label_bbox_norm || vlmBoxCandidates(row, vlm),'最终训练框','human')
   return []
 }
 function asBoxes(raw:any){
-  if(!Array.isArray(raw) || raw.length<4) return []
-  return Array.isArray(raw[0]) || typeof raw[0] === 'object' ? raw : [raw]
+  if(raw == null || raw === '') return []
+  if(typeof raw === 'string'){
+    try { return asBoxes(JSON.parse(raw)) } catch (_) { return [] }
+  }
+  if(Array.isArray(raw)){
+    if(raw.length >= 4 && raw.slice(0,4).every((item:any)=>Number.isFinite(Number(item))) && typeof raw[0] !== 'object') return [raw]
+    return raw.flatMap((item:any)=>asBoxes(item))
+  }
+  if(raw && typeof raw === 'object'){
+    const grouped=raw.detections || raw.targets || raw.boxes || raw.bboxes || raw.items
+    if(grouped) return asBoxes(grouped)
+    const box=raw.bbox || raw.box || raw.xyxy || raw.bbox_xyxy || raw.bbox_norm || raw.bbox_xyxy_norm || raw.xywh
+    if(box) return [{...raw,bbox:box,bbox_format:raw.bbox_format || raw.format || raw.coordinate_format}]
+  }
+  return []
 }
 function vlmBoxCandidates(row:any, vlm:any){
   const result:any[]=[]
@@ -286,11 +322,16 @@ function imageHeightHint(row:any){ return Number(row.frame_height || row.image_h
 function edgeStage(row:any,key:'l1'|'l2'){
   const stage={ ...(row.sample_judgement?.[key] || {}) }
   const topBox=row[`${key}_bbox`]
+  const topDetections=row[`${key}_detections`] || row[`${key}Detections`]
+  const detectionRows=asBoxes(topDetections)
   const topStatus=row[`${key}_status`]
   const topClass=row[`${key}_class`]
   const topConfidence=row[`${key}_confidence`]
+  if(!stage.detections && detectionRows.length) stage.detections=topDetections
+  if(!stage.bbox && detectionRows.length) stage.bbox=topDetections
   if(!stage.bbox && asBoxes(topBox).length) stage.bbox=topBox
   if(!stage.status && topStatus) stage.status=topStatus
+  if(!stage.classes && detectionRows.length) stage.classes=[...new Set(detectionRows.map((item:any)=>item.class_name || item.className || item.label || item.class).filter(Boolean))]
   if(!stage.classes && topClass) stage.classes=[topClass]
   if(stage.confidence == null && topConfidence != null) stage.confidence=topConfidence
   return stage
@@ -327,7 +368,7 @@ function edgeStageSummary(stage:any, label:string){
 }
 function isEdgeStageReported(stage:any){ return Boolean(stage && !['not_reported','not_run','pending',''].includes(String(stage.status || ''))) }
 function hasEdgeBox(stage:any){
-  return asBoxes(stage?.bbox || stage?.boxes || []).length > 0
+  return asBoxes(stage?.detections || stage?.bbox || stage?.boxes || []).length > 0
 }
 function hasStageEvidence(stage:any){
   return isEdgeStageReported(stage) || hasEdgeBox(stage)
@@ -388,10 +429,14 @@ function edgeVlmWarning(row:any){
   if(vlmDone && vlmHit && !edgeHit) return '注意：VLM 判断存在饮品容器，但当前素材没有 L1/L2 命中框佐证；VLM 框只能作为草稿，不能直接作为训练框，必须人工确认/修框。'
   if(vlmDone && edgeHit && !vlmHit) return '注意：L1/L2 命中饮品容器，但 VLM 未确认，疑似误报或 VLM 漏判，需要人工确认。'
   const width=selectedImageSize.value.width || imageWidthHint(row), height=selectedImageSize.value.height || imageHeightHint(row)
-  const edgeRaw=(asBoxes(l2.bbox).length ? l2.bbox : l1.bbox) || []
-  const edgeBox=asBoxes(edgeRaw).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean)[0]
-  const vlmBox=asBoxes(vlmBoxCandidates(row, vlm)).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean)[0]
-  if(edgeHit && vlmHit && edgeBox && vlmBox && boxIou(edgeBox,vlmBox)<0.2) return '注意：VLM 标注框与 L1/L2 检测框位置偏差较大，不能直接作为训练标签，建议人工修框。'
+  const edgeRaw=(asBoxes(l2.detections || l2.bbox).length ? (l2.detections || l2.bbox) : (l1.detections || l1.bbox)) || []
+  const edgeBoxes=asBoxes(edgeRaw).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean)
+  const vlmBoxes=asBoxes(vlmBoxCandidates(row, vlm)).map((box:any)=>normaliseBox(box,width,height)).filter(Boolean)
+  if(edgeHit && vlmHit && edgeBoxes.length && vlmBoxes.length && edgeBoxes.length !== vlmBoxes.length) return `注意：L1/L2 返回 ${edgeBoxes.length} 个目标框，VLM 返回 ${vlmBoxes.length} 个目标框，数量不一致；请人工确认。`
+  if(edgeHit && vlmHit && edgeBoxes.length && vlmBoxes.length){
+    const badlyMatched=vlmBoxes.some((vlmBox:any)=>Math.max(...edgeBoxes.map((edgeBox:any)=>boxIou(edgeBox,vlmBox)))<0.2)
+    if(badlyMatched) return '注意：VLM 标注框与 L1/L2 检测框位置偏差较大，不能直接作为训练标签，建议人工修框。'
+  }
   return ''
 }
 function lifecycleStages(row:any){
@@ -416,6 +461,5 @@ onMounted(refresh)
 </script>
 
 <style scoped>
-.page-head{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}.page-head h2{margin:3px 0 8px}.page-head p{margin:0;color:#71809a}.eyebrow{font-size:13px;color:#3277d8;font-weight:700}.context-card,.panel{margin-bottom:16px}.context{display:grid;grid-template-columns:1fr 1fr 1fr 1.7fr;gap:14px;align-items:end}.context label{display:grid;gap:6px;color:#667792;font-size:13px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}.metric{border:1px solid #e4ebf5;padding:16px;border-radius:10px;background:white}.metric strong{font-size:30px;display:block;color:#17243d}.metric.danger strong{color:#cc4958}.metric span,.metric small{display:block;color:#72829c}.metric small{margin-top:7px;font-size:12px}.panel-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.panel-head span{color:#71809a;font-size:13px}.thumb{width:72px;height:54px;object-fit:cover;border-radius:7px;background:#edf2f8}.clickable{cursor:zoom-in}.sample-cell{display:flex;align-items:center;gap:10px}.sample-cell span{max-width:130px;overflow:hidden;text-overflow:ellipsis}.ok{color:#168353}.blocked{color:#bb7b1a}.detail{display:grid;grid-template-columns:1.25fr 1fr;gap:22px}.image-stage-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}.image-stage-head span{font-size:12px;color:#71809a}.audit-image{position:relative;background:#0f1b30;line-height:0;width:100%;max-height:560px;overflow:auto}.audit-image img{display:block;width:100%;height:auto;background:#0f1b30}.audit-box{position:absolute;box-sizing:border-box;border:3px solid #f59e0b;background:transparent!important;color:transparent!important;font-size:0!important;line-height:0!important;min-width:18px;min-height:18px;pointer-events:auto}.audit-box.l1{border-color:#f59e0b}.audit-box.l2{border-color:#22c55e}.audit-box.vlm{border-color:#3b82f6}.audit-box.human{border-color:#a855f7}.box-legend{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:9px 0;color:#53637c;font-size:12px}.box-legend i{font-style:normal;color:#a1adbf}.legend-dot{display:inline-block;width:10px;height:10px;border:2px solid;border-radius:2px;background:transparent}.legend-dot.l1{border-color:#f59e0b}.legend-dot.l2{border-color:#22c55e}.legend-dot.vlm{border-color:#3b82f6}.legend-dot.human{border-color:#a855f7}.box-note{color:#71809a;font-size:12px}.consistency-warning{margin:0 0 12px;padding:10px 12px;border:1px solid #fecaca;background:#fff1f2;color:#b91c1c;border-radius:8px;font-weight:700;line-height:1.55}.detail p{line-height:1.7;word-break:break-word;margin:4px 0}.lifecycle-stages{margin-top:12px;padding:14px;background:#f7f9fc;border-radius:8px}.stage-card{appearance:none;width:100%;position:relative;margin-top:9px;padding:9px 10px 9px 15px;border:0;border-left:3px solid #94a3b8;background:#fff;border-radius:6px;text-align:left;cursor:pointer}.stage-card:hover,.stage-card.selected{background:#eef6ff;box-shadow:0 0 0 1px #bfdbfe inset}.stage-card::before{content:'';position:absolute;left:-7px;top:15px;width:10px;height:10px;border-radius:50%;background:#94a3b8}.stage-card.done{border-color:#22a06b}.stage-card.done::before{background:#22a06b}.stage-card.waiting{border-color:#e2a126}.stage-card.waiting::before{background:#e2a126}.stage-card.blocked{border-color:#d94f5d}.stage-card.blocked::before{background:#d94f5d}.stage-card strong,.stage-card span,.stage-card small{display:block}.stage-card span{color:#334155;font-size:13px;line-height:1.55;margin-top:2px}.stage-card small{color:#71809a;font-size:12px;line-height:1.5;margin-top:2px}.chain-detail{min-width:0}@media(max-width:1200px){.context{grid-template-columns:1fr 1fr}.metrics{grid-template-columns:1fr}.detail{grid-template-columns:1fr}}
+.page-head{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}.page-head h2{margin:3px 0 8px}.page-head p{margin:0;color:#71809a}.eyebrow{font-size:13px;color:#3277d8;font-weight:700}.context-card,.panel{margin-bottom:16px}.context{display:grid;grid-template-columns:1fr 1fr 1fr 1.7fr;gap:14px;align-items:end}.context label{display:grid;gap:6px;color:#667792;font-size:13px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}.metric{border:1px solid #e4ebf5;padding:16px;border-radius:10px;background:white}.metric strong{font-size:30px;display:block;color:#17243d}.metric.danger strong{color:#cc4958}.metric span,.metric small{display:block;color:#72829c}.metric small{margin-top:7px;font-size:12px}.panel-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.panel-head span{color:#71809a;font-size:13px}.pager{display:flex;justify-content:flex-end;margin-top:14px}.ok{color:#168353}.blocked{color:#bb7b1a}.detail{display:grid;grid-template-columns:1.25fr 1fr;gap:22px}.image-stage-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}.image-stage-head span{font-size:12px;color:#71809a}.audit-image{position:relative;background:#0f1b30;line-height:0;width:100%;max-height:560px;overflow:auto}.audit-image img{display:block;width:100%;height:auto;background:#0f1b30}.audit-box{position:absolute;box-sizing:border-box;border:3px solid #f59e0b;background:transparent!important;color:transparent!important;font-size:0!important;line-height:0!important;min-width:18px;min-height:18px;pointer-events:auto}.audit-box.l1{border-color:#f59e0b}.audit-box.l2{border-color:#22c55e}.audit-box.vlm{border-color:#3b82f6}.audit-box.human{border-color:#a855f7}.box-legend{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:9px 0;color:#53637c;font-size:12px}.box-legend i{font-style:normal;color:#a1adbf}.legend-dot{display:inline-block;width:10px;height:10px;border:2px solid;border-radius:2px;background:transparent}.legend-dot.l1{border-color:#f59e0b}.legend-dot.l2{border-color:#22c55e}.legend-dot.vlm{border-color:#3b82f6}.legend-dot.human{border-color:#a855f7}.box-note{color:#71809a;font-size:12px}.consistency-warning{margin:0 0 12px;padding:10px 12px;border:1px solid #fecaca;background:#fff1f2;color:#b91c1c;border-radius:8px;font-weight:700;line-height:1.55}.detail p{line-height:1.7;word-break:break-word;margin:4px 0}.lifecycle-stages{margin-top:12px;padding:14px;background:#f7f9fc;border-radius:8px}.stage-card{appearance:none;width:100%;position:relative;margin-top:9px;padding:9px 10px 9px 15px;border:0;border-left:3px solid #94a3b8;background:#fff;border-radius:6px;text-align:left;cursor:pointer}.stage-card:hover,.stage-card.selected{background:#eef6ff;box-shadow:0 0 0 1px #bfdbfe inset}.stage-card::before{content:'';position:absolute;left:-7px;top:15px;width:10px;height:10px;border-radius:50%;background:#94a3b8}.stage-card.done{border-color:#22a06b}.stage-card.done::before{background:#22a06b}.stage-card.waiting{border-color:#e2a126}.stage-card.waiting::before{background:#e2a126}.stage-card.blocked{border-color:#d94f5d}.stage-card.blocked::before{background:#d94f5d}.stage-card strong,.stage-card span,.stage-card small{display:block}.stage-card span{color:#334155;font-size:13px;line-height:1.55;margin-top:2px}.stage-card small{color:#71809a;font-size:12px;line-height:1.5;margin-top:2px}.chain-detail{min-width:0}@media(max-width:1200px){.context{grid-template-columns:1fr 1fr}.metrics{grid-template-columns:1fr}.detail{grid-template-columns:1fr}}
 </style>
-

@@ -163,16 +163,19 @@ function isResolved(row: any) {
     || reasoning.includes('未发现饮品容器')
 }
 function targetBoxes(row: any): number[][] {
-  if (isResolved(row)) return []
   const boxes = [
     ...boxesFromDetections(row?.current_targets),
     ...boxesFromDetections(row?.targets),
+    ...boxesFromDetections(row?.historical_targets),
     ...boxesFromDetections(row?.l2_detections || row?.l2Detections),
+    ...boxesFromDetections(row?.historical_l2_detections),
     ...boxesFromDetections(row?.l2_output?.detections || row?.l2_output?.targets),
     ...boxesFromDetections(row?.l1_detections || row?.l1Detections),
+    ...boxesFromDetections(row?.historical_l1_detections),
     ...boxesFromDetections(row?.l1_output?.detections || row?.l1_output?.targets),
     normalizeBox(row?.l2_bbox || row?.l2_output?.bbox),
     normalizeBox(row?.bbox || row?.bbox_json),
+    normalizeBox(row?.historical_bbox),
     normalizeBox(row?.l1_bbox || row?.l1_output?.bbox),
   ].filter((box) => box.length === 4)
   const unique = dedupeBoxes(boxes)

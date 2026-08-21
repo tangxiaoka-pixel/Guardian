@@ -153,7 +153,7 @@ async function loadMaterials(page = materialPage.value) {
 async function refresh(){ loading.value=true; try { materialPage.value=1; const [,d,t,e,mo] = await Promise.all([loadMaterials(1),api.get('/datasets',{params:{scope:'customer',customer_id:customerId.value}}),api.get('/training-runs',{params:{customer_id:customerId.value}}),api.get('/evaluations'),api.get('/models')]); datasets.value=d.data||[]; trainingRuns.value=t.data||[]; evaluations.value=e.data||[]; models.value=mo.data||[] } catch(err:any){ ElMessage.error(err?.response?.data?.detail || '加载 Forge 数据失败') } finally { loading.value=false } }
 async function buildDataset(){ try { const { data } = await api.post('/ai-lifecycle/datasets/build-customer',{ customer_id:customerId.value, site_id:siteId.value, scenario:scenario.value }); ElMessage.success(`已冻结数据集 ${data.dataset_version}`); refresh() } catch(err:any){ ElMessage.error(err?.response?.data?.detail || '无法创建数据集') } }
 function asset(url:string){ return apiAssetUrl(url || '') }
-function auditModel(_row:any){ return 'guardian-vlm' }
+function auditModel(row:any){ return row.sample_judgement?.vlm?.teacher_model || row.teacher_model || 'ollama/qwen2.5vl:7b@5070Ti' }
 function auditTime(row:any){ return row.vlm_audited_at || row.sample_judgement?.vlm?.audited_at || row.sample_judgement?.vlm?.at || row.updated_at || row.created_at }
 function formatTime(value:any){
   if(!value) return '-'
@@ -257,8 +257,8 @@ function asBoxes(raw:any){
 function vlmBoxCandidates(row:any, vlm:any){
   const result:any[]=[]
   const pushBox=(box:any, format='')=>{
-    const normalizedFormat=String(format || '').toLowerCase()
-    if(!normalizedFormat || !Array.isArray(box) || box.length<4) return
+    if(!Array.isArray(box) || box.length<4) return
+    const normalizedFormat=String(format || (box.slice(0,4).every((value:any)=>Math.abs(Number(value))<=1.01) ? 'xyxy_norm' : 'xyxy')).toLowerCase()
     result.push({ bbox: box.slice(0,4), bbox_format: normalizedFormat })
   }
   const pushObjectBoxes=(value:any, fallbackFormat='')=>{
@@ -282,12 +282,15 @@ function vlmBoxCandidates(row:any, vlm:any){
   pushObjectBoxes(vlm?.boxes, String(vlm?.boxes_format || vlm?.bbox_format || '').toLowerCase())
   pushObjectBoxes(row?.vlm_raw?.boxes, String(row?.vlm_raw?.boxes_format || row?.vlm_raw?.bbox_format || '').toLowerCase())
   pushBox(vlm?.bbox_xyxy_norm, 'xyxy_norm')
+  pushBox(vlm?.bbox, String(vlm?.bbox_format || '').toLowerCase())
   pushBox(row?.vlm_raw?.bbox_xyxy_norm, 'xyxy_norm')
+  pushBox(row?.vlm_raw?.bbox, String(row?.vlm_raw?.bbox_format || '').toLowerCase())
   pushBox(vlm?.bbox_norm, String(vlm?.bbox_format || vlm?.bbox_norm_format || 'xyxy_norm').toLowerCase())
   pushBox(row?.vlm_raw?.bbox_norm, String(row?.vlm_raw?.bbox_format || row?.vlm_raw?.bbox_norm_format || 'xyxy_norm').toLowerCase())
   pushBox(row?.label_bbox_norm, String(row?.label_bbox_format || 'xyxy_norm').toLowerCase())
   pushObjectBoxes(row?.vlm_boxes, String(row?.vlm_bbox_format || '').toLowerCase())
   pushBox(row?.vlm_boxes, String(row?.vlm_bbox_format || '').toLowerCase())
+  pushBox(row?.vlm_bbox, String(row?.vlm_bbox_format || '').toLowerCase())
   return result
 }
 function normaliseBox(raw:any,width:number,height:number){

@@ -34,7 +34,8 @@ const edgeRuntimeCacheTtlMs = Number(process.env.GUARDIAN_EDGE_RUNTIME_CACHE_TTL
 const forgeRuntimeCacheTtlMs = Number(process.env.GUARDIAN_FORGE_RUNTIME_CACHE_TTL_MS || 15 * 1000)
 const edgeDirectSshEnabled = process.env.GUARDIAN_EDGE_DIRECT_SSH_ENABLED === '1'
 const mageVlmBaseUrl = (process.env.GUARDIAN_MAGE_VLM_BASE_URL || process.env.GUARDIAN_OLLAMA_BASE_URL || 'http://100.65.222.51:11434').replace(/\/$/, '')
-const mageVlmModel = process.env.GUARDIAN_MAGE_VLM_MODEL || process.env.GUARDIAN_OLLAMA_VLM_MODEL || 'mage-vl:4b'
+// 5070Ti 的正式审计模型已迁移到 Ollama Qwen2.5-VL；保留旧变量名仅为兼容。
+const mageVlmModel = process.env.GUARDIAN_OLLAMA_VLM_MODEL || process.env.GUARDIAN_MAGE_VLM_MODEL || 'qwen2.5vl:7b'
 const vlmInferenceBaseUrl = (
   process.env.GUARDIAN_VLM_INFERENCE_BASE_URL
   || process.env.GUARDIAN_MAGE_STANDALONE_BASE_URL
@@ -1175,6 +1176,10 @@ function normalizeAlarmRecord(item) {
     l1_detections: activeL1Detections.length ? activeL1Detections : (resolved ? [] : item.l1_detections),
     l2_detections: activeL2Detections.length ? activeL2Detections : (resolved ? [] : item.l2_detections),
     historical_targets: item.historical_targets || (resolved && targets.length ? targets : undefined),
+    // “已消除”只清空当前风险，不清空详情页可追溯的检测证据。
+    historical_l1_detections: item.historical_l1_detections || (resolved ? l1Detections : undefined),
+    historical_l2_detections: item.historical_l2_detections || (resolved ? l2Detections : undefined),
+    historical_bbox: item.historical_bbox || (resolved ? (normalizedBbox.length ? normalizedBbox : targets[0]?.bbox || []) : undefined),
     rule_result: ruleResult,
     human_records: item.human_records || [],
   }
@@ -1531,9 +1536,8 @@ function ingestForgeSample(body = {}) {
       ? 'auto_labeled'
       : 'need_review',
     forge_label_status: raw.label_status || '',
-    // Forge 训练闭环仅使用当前正式审计服务。旧 POC 的 Mage-VL 名称只
-    // 是历史元数据，不能让同一条流水线看起来像有两个审计模型。
-    teacher_model: 'guardian-vlm',
+    // Forge 闭环统一标识当前 5070Ti 的 Ollama 审计模型。
+    teacher_model: configuredVlmTeacher(),
     teacher_confidence: Number(vlm.confidence ?? raw.confidence ?? 0),
     teacher_type: 'vlm_audit',
     vlm_status: verdict === 'positive' ? 'suspected_hazard' : verdict === 'negative' ? 'no_hazard' : 'uncertain',
@@ -2168,10 +2172,10 @@ function materialPool() {
     }, item)
     return {
       ...item,
-      teacher_model: 'guardian-vlm',
+      teacher_model: configuredVlmTeacher(),
       source_note: canonicalSourceNote,
       sample_judgement: vlm
-        ? { ...item.sample_judgement, vlm: { ...vlm, teacher_model: 'guardian-vlm' } }
+        ? { ...item.sample_judgement, vlm: { ...vlm, teacher_model: configuredVlmTeacher() } }
         : item.sample_judgement,
     }
   })
@@ -2384,9 +2388,10 @@ function vlmInferenceStatus() {
 }
 
 const isVlmInferenceProvider = (provider) => ['mage-vl-inference', 'vlm-inference', 'mage-vl-standalone', 'mage-vl', 'mage-standalone'].includes(provider)
+const configuredVlmTeacher = () => `ollama/${mageVlmModel}@5070Ti`
 
 function activeVlmProviderStatus() {
-  const active = process.env.GUARDIAN_VLM_PROVIDER || 'mage-vl-inference'
+  const active = process.env.GUARDIAN_VLM_PROVIDER || 'ollama'
   if (isVlmInferenceProvider(active)) {
     const mage = vlmInferenceStatus()
     return {
@@ -2625,9 +2630,8 @@ function forgeMaterialRows() {
       },
       vlm: {
         status: vlmStatus,
-        // 统一展示和回填为 Forge 当前正式的审计模型，避免历史 POC 字段
-        // 与当前 guardian-vlm 混在同一审计队列中。
-        teacher_model: 'guardian-vlm',
+        // 统一展示和回填为 Forge 当前正式的审计模型。
+        teacher_model: configuredVlmTeacher(),
         suggested_category: vlmType,
         suggested_labels: Array.isArray(rawVlmBoxes) && rawVlmBoxes.length ? ['bbox_draft'] : [],
         boxes: Array.isArray(rawVlmBoxes) ? rawVlmBoxes : [],

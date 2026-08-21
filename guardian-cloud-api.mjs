@@ -1630,7 +1630,61 @@ function bboxFromAlarm(alarm = {}) {
   return []
 }
 
-function ingestForgeSampleFromAlarm(alarm = {}) {
+function jsonFromVlmText(value = '') {
+  const text = String(value || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+  try { return JSON.parse(text) } catch { return null }
+}
+
+async function auditForgeImageWithOllama(imageBase64 = '') {
+  const fallback = (reason) => ({
+    verdict: 'uncertain', confidence: 0, reason, status: 'failed',
+    bbox_norm: [], bbox_format: '', audited_at: businessNow(),
+  })
+  if (!imageBase64) return fallback('VLM 审计未执行：素材缺少图片。')
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 30_000)
+    const response = await fetch(`${mageVlmBaseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: mageVlmModel,
+        stream: false,
+        options: { temperature: 0 },
+        prompt: '检查桌面图中是否存在杯子、马克杯、瓶子、保温杯或易拉罐等饮品容器。只返回 JSON：{"drink_container_visible":true|false,"objects":[{"class_name":"cup|mug|bottle|thermos|can","bbox_xyxy_px":[x1,y1,x2,y2]}],"reason":"中文理由"}。图片尺寸为 1280×720；bbox 必须是像素坐标，x 在 0..1280，y 在 0..720。',
+        images: [imageBase64],
+      }),
+    })
+    clearTimeout(timeout)
+    if (!response.ok) return fallback(`VLM 审计失败：${response.status}`)
+    const payload = jsonFromVlmText((await response.json())?.response)
+    if (!payload || typeof payload.drink_container_visible !== 'boolean') return fallback('VLM 审计返回格式无效，等待人工复核。')
+    const object = Array.isArray(payload.objects) ? payload.objects.find((item) => item && typeof item === 'object') : null
+    const rawBox = object?.bbox_xyxy_px || object?.bbox_xyxy_norm || object?.bbox || []
+    const box = Array.isArray(rawBox) ? rawBox.slice(0, 4).map(Number) : []
+    // Older Qwen responses occasionally call pixel coordinates "_norm".
+    // A value above 1000 unambiguously means 1280×720 source pixels.
+    const pixels = box.length === 4 && box.every(Number.isFinite) && box[2] > box[0] && box[3] > box[1]
+      ? (box[2] > 1000 || box[3] > 720 ? box : [box[0] * 1.28, box[1] * 0.72, box[2] * 1.28, box[3] * 0.72])
+      : []
+    const bboxNorm = pixels.length === 4
+      ? [pixels[0] / 1.28, pixels[1] / 0.72, pixels[2] / 1.28, pixels[3] / 0.72].map((value) => Math.max(0, Math.min(1000, Math.round(value))))
+      : []
+    const visible = payload.drink_container_visible === true
+    const className = String(object?.class_name || '').split('|')[0] || 'drink_container'
+    return {
+      verdict: visible ? 'positive' : 'negative', confidence: visible ? 0.85 : 0.8,
+      reason: String(payload.reason || (visible ? 'VLM 识别到饮品容器。' : 'VLM 未识别到饮品容器。')),
+      container_class: visible ? className : '', bbox_norm: bboxNorm,
+      bbox_format: bboxNorm.length ? 'xyxy_norm' : '', status: 'completed', audited_at: businessNow(),
+    }
+  } catch (error) {
+    return fallback(`VLM 审计异常：${error?.name === 'AbortError' ? '超时' : '不可用'}。`)
+  }
+}
+
+async function ingestForgeSampleFromAlarm(alarm = {}) {
   const scenario = String(alarm.algorithm || alarm.alarm_type || '').trim()
   const alarmId = String(alarm.alarm_id || '').trim()
   const action = String(alarm.event_action || alarm.lifecycle_action || '').toLowerCase()
@@ -1662,6 +1716,7 @@ function ingestForgeSampleFromAlarm(alarm = {}) {
   const sourceNote = resolved
     ? '报警消除验证帧：L2 连续复核未发现饮品容器，用于确认报警消除和沉淀困难负样本。'
     : '告警上报帧：L2 复核确认风险后进入 Forge，用于 VLM 审计、人工复核和训练闭环。'
+  const vlm = await auditForgeImageWithOllama(imageBase64)
   return ingestForgeSample({
     image_base64: imageBase64,
     sample: {
@@ -1700,12 +1755,8 @@ function ingestForgeSampleFromAlarm(alarm = {}) {
       },
       bbox,
       confidence,
-      vlm: {
-        verdict: resolved ? 'negative' : 'uncertain',
-        confidence: resolved ? 0.9 : 0,
-        reason: resolved ? '报警消除帧：当前画面未确认饮品容器。' : '告警帧等待 VLM 审计。',
-      },
-      label_status: resolved ? 'auto_negative' : '',
+      vlm,
+      label_status: vlm.verdict === 'positive' ? 'auto_positive' : vlm.verdict === 'negative' ? 'auto_negative' : '',
     },
   })
 }
@@ -6961,7 +7012,7 @@ http.createServer(async (req, res) => {
       const rows = cloudAlarms().filter((item) => item.alarm_id !== alarm.alarm_id)
       rows.unshift(alarm)
       writeCloudAlarms(rows.slice(0, 1000))
-      const forgeIngest = ingestForgeSampleFromAlarm(alarm)
+      const forgeIngest = await ingestForgeSampleFromAlarm(alarm)
       if (!forgeIngest.ok && !forgeIngest.skipped) {
         appendLifecycleAudit('alarm_forge_ingest_failed', {
           alarm_id: alarm.alarm_id,

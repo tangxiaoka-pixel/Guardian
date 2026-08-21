@@ -1652,7 +1652,7 @@ async function auditForgeImageWithOllama(imageBase64 = '') {
         model: mageVlmModel,
         stream: false,
         options: { temperature: 0 },
-        prompt: '检查桌面图中是否存在杯子、马克杯、瓶子、保温杯或易拉罐等饮品容器。只返回 JSON：{"drink_container_visible":true|false,"objects":[{"class_name":"cup|mug|bottle|thermos|can","bbox_xyxy_px":[x1,y1,x2,y2]}],"reason":"中文理由"}。图片尺寸为 1280×720；bbox 必须是像素坐标，x 在 0..1280，y 在 0..720。',
+        prompt: '图片尺寸为 1280×720。检查桌面上是否存在杯子、马克杯、瓶子、保温杯或易拉罐等饮品容器。只返回 JSON：{"drink_container_visible":true|false,"objects":[{"class_name":"cup|mug|bottle|thermos|can","bbox_xyxy_px":[x1,y1,x2,y2]}],"reason":"中文理由"}。若无容器，objects 必须为空；坐标必须为图像像素。',
         images: [imageBase64],
       }),
     })
@@ -1663,10 +1663,10 @@ async function auditForgeImageWithOllama(imageBase64 = '') {
     const object = Array.isArray(payload.objects) ? payload.objects.find((item) => item && typeof item === 'object') : null
     const rawBox = object?.bbox_xyxy_px || object?.bbox_xyxy_norm || object?.bbox || []
     const box = Array.isArray(rawBox) ? rawBox.slice(0, 4).map(Number) : []
-    // Older Qwen responses occasionally call pixel coordinates "_norm".
-    // A value above 1000 unambiguously means 1280×720 source pixels.
+    // The audit prompt requires 1280×720 source pixels.  Older Qwen replies
+    // may call this field "_norm", but still return source pixels.
     const pixels = box.length === 4 && box.every(Number.isFinite) && box[2] > box[0] && box[3] > box[1]
-      ? (box[2] > 1000 || box[3] > 720 ? box : [box[0] * 1.28, box[1] * 0.72, box[2] * 1.28, box[3] * 0.72])
+      ? box
       : []
     const bboxNorm = pixels.length === 4
       ? [pixels[0] / 1.28, pixels[1] / 0.72, pixels[2] / 1.28, pixels[3] / 0.72].map((value) => Math.max(0, Math.min(1000, Math.round(value))))

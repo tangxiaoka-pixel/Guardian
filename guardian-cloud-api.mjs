@@ -36,6 +36,9 @@ const edgeDirectSshEnabled = process.env.GUARDIAN_EDGE_DIRECT_SSH_ENABLED === '1
 const mageVlmBaseUrl = (process.env.GUARDIAN_MAGE_VLM_BASE_URL || process.env.GUARDIAN_OLLAMA_BASE_URL || 'http://100.65.222.51:11434').replace(/\/$/, '')
 // 5070Ti 的正式审计模型已迁移到 Ollama Qwen2.5-VL；保留旧变量名仅为兼容。
 const mageVlmModel = process.env.GUARDIAN_OLLAMA_VLM_MODEL || process.env.GUARDIAN_MAGE_VLM_MODEL || 'qwen2.5vl:7b'
+// This is the exact prompt sent to the production Ollama Qwen audit, not a
+// product-level summary. Keep it visible in the algorithm detail API/UI.
+const deskDrinkVlmRuntimePrompt = '图片尺寸为 1280×720。检查桌面上是否存在杯子、马克杯、瓶子、保温杯或易拉罐等饮品容器。只返回 JSON：{"drink_container_visible":true|false,"objects":[{"class_name":"cup|mug|bottle|thermos|can","bbox_xyxy_px":[x1,y1,x2,y2]}],"reason":"中文理由"}。若无容器，objects 必须为空；坐标必须为图像像素。'
 const vlmInferenceBaseUrl = (
   process.env.GUARDIAN_VLM_INFERENCE_BASE_URL
   || process.env.GUARDIAN_MAGE_STANDALONE_BASE_URL
@@ -204,6 +207,7 @@ const globalScenarioTemplates = [
   future_target_classes: ['drink_container'],
   training_label_schema: { detector_class: 'drink_container', attributes: ['cup', 'mug', 'bottle', 'thermos', 'can'], excluded: ['screen_image', 'object_outside_roi'] },
   vlm_audit_prompt: '桌面指定禁放区域内是否可见杯子、瓶子、保温杯或易拉罐等饮品容器？仅依据可见画面，返回 positive、negative 或 uncertain，并说明对象是否位于 ROI 内。',
+  vlm_runtime_prompt: deskDrinkVlmRuntimePrompt,
   default_sample_fps: 2, min_sample_fps: 1, max_sample_fps: 3, l1_threshold: 0.45, l2_threshold: 0.60,
   consecutive_frames: 2, min_duration_sec: 3, cooldown_sec: 300, reset_after_absence_sec: 5,
   priority: 'high', roi_required: true, roi_type: 'polygon', capacity_base_cost: 16, candidate_rate_per_min: 1, enabled: true,
@@ -1652,7 +1656,7 @@ async function auditForgeImageWithOllama(imageBase64 = '') {
         model: mageVlmModel,
         stream: false,
         options: { temperature: 0 },
-        prompt: '图片尺寸为 1280×720。检查桌面上是否存在杯子、马克杯、瓶子、保温杯或易拉罐等饮品容器。只返回 JSON：{"drink_container_visible":true|false,"objects":[{"class_name":"cup|mug|bottle|thermos|can","bbox_xyxy_px":[x1,y1,x2,y2]}],"reason":"中文理由"}。若无容器，objects 必须为空；坐标必须为图像像素。',
+        prompt: deskDrinkVlmRuntimePrompt,
         images: [imageBase64],
       }),
     })

@@ -256,6 +256,9 @@ function asBoxes(raw:any){
 }
 function vlmBoxCandidates(row:any, vlm:any){
   const result:any[]=[]
+  // Material detail returns the source audit in `row.vlm`, while the
+  // normalized judgement keeps a flat `boxes` array. Read both contracts.
+  const rawVlm=row?.vlm || row?.vlm_raw || {}
   const pushBox=(box:any, format='')=>{
     if(!Array.isArray(box) || box.length<4) return
     const normalizedFormat=String(format || (box.slice(0,4).every((value:any)=>Math.abs(Number(value))<=1.01) ? 'xyxy_norm' : 'xyxy')).toLowerCase()
@@ -280,7 +283,11 @@ function vlmBoxCandidates(row:any, vlm:any){
   pushObjectBoxes(row?.vlm_raw?.labels)
   pushObjectBoxes(row?.vlm_raw?.detections)
   pushObjectBoxes(vlm?.boxes, String(vlm?.boxes_format || vlm?.bbox_format || '').toLowerCase())
+  pushBox(vlm?.boxes, String(vlm?.boxes_format || vlm?.bbox_format || '').toLowerCase())
   pushObjectBoxes(row?.vlm_raw?.boxes, String(row?.vlm_raw?.boxes_format || row?.vlm_raw?.bbox_format || '').toLowerCase())
+  pushBox(rawVlm?.bbox_xyxy_norm, 'xyxy_norm')
+  pushBox(rawVlm?.bbox, String(rawVlm?.bbox_format || '').toLowerCase())
+  pushBox(rawVlm?.bbox_norm, String(rawVlm?.bbox_format || rawVlm?.bbox_norm_format || 'xyxy_norm').toLowerCase())
   pushBox(vlm?.bbox_xyxy_norm, 'xyxy_norm')
   pushBox(vlm?.bbox, String(vlm?.bbox_format || '').toLowerCase())
   pushBox(row?.vlm_raw?.bbox_xyxy_norm, 'xyxy_norm')

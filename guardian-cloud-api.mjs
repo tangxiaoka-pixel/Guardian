@@ -1633,11 +1633,16 @@ function bboxFromAlarm(alarm = {}) {
 function ingestForgeSampleFromAlarm(alarm = {}) {
   const scenario = String(alarm.algorithm || alarm.alarm_type || '').trim()
   const alarmId = String(alarm.alarm_id || '').trim()
-  const imageBase64 = dataUrlToBase64(alarm.alarm_snapshot || alarm.proof_snapshot || alarm.snapshot || alarm.image_base64 || alarm.imageBase64 || '')
-  if (!alarmId || !scenario || !imageBase64) return { ok: false, skipped: true, detail: 'alarm missing id, scenario or snapshot' }
-
   const action = String(alarm.event_action || alarm.lifecycle_action || '').toLowerCase()
   const resolved = action === 'resolved' || alarm.alarm_status === 'resolved'
+  // A cleared alarm must use the independently reported verification frame.
+  // Never fall back to the alarm frame here: that produced two different Forge
+  // records carrying the same image and made the evidence chain misleading.
+  const sourceSnapshot = resolved
+    ? (alarm.resolved_snapshot || alarm.resolved_snapshot_url || '')
+    : (alarm.alarm_snapshot || alarm.proof_snapshot || alarm.snapshot || alarm.image_base64 || alarm.imageBase64 || '')
+  const imageBase64 = dataUrlToBase64(sourceSnapshot)
+  if (!alarmId || !scenario || !imageBase64) return { ok: false, skipped: true, detail: resolved ? 'resolved alarm missing independent resolved snapshot' : 'alarm missing id, scenario or snapshot' }
   const targets = alarmTargetsFromRecord(alarm)
   const l1Detections = dedupeAlarmTargets([
     ...normalizeAlarmDetections(alarm.l1_detections || alarm.l1Detections, 'l1_detections'),

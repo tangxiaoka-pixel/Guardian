@@ -24,28 +24,49 @@
         <el-pagination background layout="total, prev, pager, next" :current-page="page" :page-size="pageSize" :total="total" @current-change="changePage" />
       </div>
     </el-card>
-    <el-dialog v-model="visible" title="告警详情" width="820px">
+    <el-dialog v-model="visible" title="告警详情" width="1260px" class="alarm-detail-dialog">
       <div v-loading="detailLoading" class="detail-wrap">
       <div v-if="selected" class="detail">
-        <div class="snapshot">
-          <svg v-if="selected.snapshot || selected.snapshot_url" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid meet" aria-label="告警关键帧">
-            <image :href="selected.snapshot || selected.snapshot_url" x="0" y="0" width="1280" height="720" preserveAspectRatio="none" />
-            <rect v-for="(box, index) in targetBoxes(selected)" :key="index" :x="box[0]" :y="box[1]" :width="box[2] - box[0]" :height="box[3] - box[1]" class="bbox" />
-          </svg>
-          <span v-else>暂无可显示的告警图片</span>
-        </div>
-        <el-descriptions :column="2" border>
-          <el-descriptions-item label="L1 输出">{{ selected.l1_output.class_name }} {{ selected.l1_output.confidence }}</el-descriptions-item>
+        <section class="evidence-panel">
+          <div class="evidence-title"><strong>双帧证据</strong><span>告警产生与消除分别留存，避免混用同一张快照。</span></div>
+          <div class="evidence-grid">
+            <figure class="frame-card">
+              <figcaption><strong>告警产生帧</strong><span>{{ formatTime(selected.timestamp) }}</span></figcaption>
+              <div class="snapshot">
+                <svg v-if="alarmFrame(selected)" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid meet" aria-label="告警产生关键帧">
+                  <image :href="alarmFrame(selected)" x="0" y="0" width="1280" height="720" preserveAspectRatio="none" />
+                  <rect v-for="(box, index) in targetBoxes(selected)" :key="index" :x="box[0]" :y="box[1]" :width="box[2] - box[0]" :height="box[3] - box[1]" class="bbox" />
+                </svg>
+                <span v-else>未收到告警产生帧</span>
+              </div>
+            </figure>
+            <figure class="frame-card">
+              <figcaption><strong>告警消除帧</strong><span>{{ formatTime(selected.resolved_at || selected.updated_at) }}</span></figcaption>
+              <div class="snapshot">
+                <svg v-if="resolvedFrame(selected)" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid meet" aria-label="告警消除验证帧">
+                  <image :href="resolvedFrame(selected)" x="0" y="0" width="1280" height="720" preserveAspectRatio="none" />
+                </svg>
+                <span v-else>{{ isResolved(selected) ? '消除事件未上报独立图片' : '告警尚未消除' }}</span>
+              </div>
+            </figure>
+          </div>
+        </section>
+        <aside class="detail-side">
+          <h3>告警信息</h3>
+          <el-descriptions :column="1" border label-width="100">
+          <el-descriptions-item label="告警 ID">{{ selected.alarm_id }}</el-descriptions-item>
+          <el-descriptions-item label="L1 输出">{{ selected.l1_output?.class_name || '-' }} {{ selected.l1_output?.confidence ?? '' }}</el-descriptions-item>
           <el-descriptions-item label="L2 输出">{{ l2DecisionText(selected) }}</el-descriptions-item>
-          <el-descriptions-item label="当前风险目标">{{ targetSummary(selected) }}</el-descriptions-item>
-          <el-descriptions-item label="规则判断">{{ JSON.stringify(selected.rule_result) }}</el-descriptions-item>
+          <el-descriptions-item label="风险目标">{{ targetSummary(selected) }}</el-descriptions-item>
+          <el-descriptions-item label="规则判断">{{ ruleText(selected) }}</el-descriptions-item>
           <el-descriptions-item label="客户反馈">{{ selected.feedback_result || '未反馈' }}</el-descriptions-item>
-          <el-descriptions-item label="处理记录">{{ selected.human_records.length }}</el-descriptions-item>
-          <el-descriptions-item label="Forge 训练素材" :span="2">
+          <el-descriptions-item label="处理记录">{{ selected.human_records?.length || 0 }}</el-descriptions-item>
+          <el-descriptions-item label="Forge 素材">
             <template v-if="selected.forge_samples?.length"><el-button link type="primary" @click="openForge(selected)">查看 {{ selected.forge_samples.length }} 条关联素材</el-button><span class="hint">仅带合规证据图的告警/消除验证帧才会进入训练闭环。</span></template>
             <span v-else class="hint">该告警尚无可追溯 Forge 素材（无合规图像或未成功入库）。</span>
           </el-descriptions-item>
-        </el-descriptions>
+          </el-descriptions>
+        </aside>
       </div>
       <el-empty v-else-if="!detailLoading" description="告警详情不存在或已被删除" />
       </div>
@@ -99,6 +120,18 @@ function formatTime(value: any) {
   const parts = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(date)
   const fields = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value])) as Record<string, string>
   return `${fields.year}-${fields.month}-${fields.day} ${fields.hour}:${fields.minute}:${fields.second}`
+}
+function alarmFrame(row: any) {
+  return row?.alarm_snapshot || row?.proof_snapshot || row?.snapshot || row?.snapshot_url || ''
+}
+function resolvedFrame(row: any) {
+  const frame = row?.resolved_snapshot || row?.resolved_snapshot_url || ''
+  return frame && frame !== alarmFrame(row) ? frame : ''
+}
+function ruleText(row: any) {
+  const rule = parseJsonish(row?.rule_result, row?.rule_result)
+  if (typeof rule === 'string') return rule || '-'
+  return rule?.reasoning || rule?.decision || '-'
 }
 function openForge(row: any) { router.push({ path: '/forge/materials', query: { source_event_id: row.alarm_id } }) }
 async function open(row: any) {
@@ -234,10 +267,28 @@ h2 { margin:0; } p { margin:6px 0 0; color:#64748b; }
 .panel { border-radius:8px; border:1px solid #dbe4ef; }
 .pagination { display:flex; justify-content:flex-end; padding-top:16px; }
 .detail-wrap { min-height:260px; }
-.detail { display:grid; grid-template-columns:300px 1fr; gap:16px; }
-.snapshot { min-height:220px; border-radius:8px; background:#1e293b; color:#cbd5e1; display:grid; place-items:center; position:relative; overflow:hidden; }
+.detail { display:grid; grid-template-columns:minmax(0, 1fr) 390px; gap:20px; align-items:start; }
+.evidence-panel { min-width:0; }
+.evidence-title { display:flex; align-items:baseline; gap:10px; margin:0 0 10px; color:#475569; }
+.evidence-title strong { color:#1e293b; font-size:16px; }
+.evidence-title span { font-size:12px; }
+.evidence-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:14px; }
+.frame-card { min-width:0; margin:0; border:1px solid #dbe4ef; border-radius:10px; overflow:hidden; background:#fff; }
+.frame-card figcaption { display:flex; justify-content:space-between; gap:8px; padding:10px 12px; color:#334155; font-size:13px; }
+.frame-card figcaption span { color:#64748b; font-size:12px; white-space:nowrap; }
+.snapshot { aspect-ratio:16 / 9; min-height:260px; border-radius:0; background:#1e293b; color:#cbd5e1; display:grid; place-items:center; position:relative; overflow:hidden; }
 .snapshot svg { width:100%; height:100%; display:block; }
 .snapshot span { position:relative; background:#0f172acc; padding:4px 8px; border-radius:6px; }
 .bbox { fill:none; stroke:#f59e0b; stroke-width:7; rx:3; }
-.hint { margin-left:8px; color:#64748b; font-size:12px; }
+.detail-side { min-width:0; border:1px solid #dbe4ef; border-radius:10px; overflow:hidden; background:#fff; }
+.detail-side h3 { margin:0; padding:13px 16px; font-size:16px; color:#1e293b; border-bottom:1px solid #e2e8f0; }
+.hint { margin-left:8px; color:#64748b; font-size:12px; line-height:1.5; }
+@media (max-width: 1000px) {
+  .detail { grid-template-columns:1fr; }
+  .snapshot { min-height:200px; }
+}
+@media (max-width: 680px) {
+  .evidence-grid { grid-template-columns:1fr; }
+  .evidence-title { align-items:flex-start; flex-direction:column; gap:2px; }
+}
 </style>

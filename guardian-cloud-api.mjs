@@ -2539,7 +2539,7 @@ function forgeSamplePreviewUrl(sample = {}, kind = 'raw') {
 }
 
 function forgeSampleAuditVerdict(sample = {}) {
-  const sampleType = sample.vlm?.sample_type || sample.vlm_sample_type || sample.sample_type || ''
+  const sampleType = sample.vlm?.verdict || sample.vlm?.sample_type || sample.vlm_sample_type || sample.sample_type || ''
   const labelStatus = sample.label_status || ''
   const rejectReason = sample.label_reject_reason || ''
   if (labelStatus === 'not_required' || sampleType === 'invalid_sample') return 'invalid_sample'

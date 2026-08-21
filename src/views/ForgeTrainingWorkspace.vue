@@ -15,7 +15,6 @@
         <label>站点 ID<el-input v-model="siteId" placeholder="当前授权站点" @change="refresh" /></label>
         <label>算法 / 场景<el-input v-model="scenario" placeholder="例如 desk_drink_intrusion" @change="refresh" /></label>
         <label>关联告警 ID<el-input v-model="alarmId" clearable placeholder="从告警中心自动带入" @change="refresh" /></label>
-        <el-alert :title="stage.note" type="info" :closable="false" show-icon />
       </div>
     </el-card>
 
@@ -104,7 +103,6 @@
         </div>
         <div class="chain-detail">
           <p><b>素材 ID：</b>{{ selected.sample_id }}</p><p><b>场景：</b>{{ selected.scenario }}</p>
-          <div v-if="edgeVlmWarning(selected)" class="consistency-warning">{{ edgeVlmWarning(selected) }}</div>
           <div class="lifecycle-stages"><b>完整处理链路</b><button v-for="stageItem in lifecycleStages(selected)" :key="stageItem.key" type="button" class="stage-card" :class="[stageItem.state, { selected: activeDetailStage === stageItem.key }]" @click="selectDetailStage(stageItem.key)"><strong>{{ stageItem.index }} {{ stageItem.title }}</strong><span>{{ stageItem.summary }}</span><small v-if="stageItem.detail">{{ stageItem.detail }}</small></button></div>
         </div>
       </div>
@@ -458,7 +456,7 @@ function lifecycleStages(row:any){
     {key:'l1',index:'②',title:'L1 标记',state:l1.status === 'hit' ? 'done' : 'waiting',summary:edgeStageSummary(l1,'L1'),detail:isEdgeStageReported(l1) && asBoxes(l1.bbox).length ? `已返回 ${asBoxes(l1.bbox).length} 个 L1 框（见图例）。` : '无 L1 坐标可绘制。'},
     {key:'l2',index:'③',title:'L2 标记',state:l2.status === 'hit' || l2.status === 'confirmed' ? 'done' : 'waiting',summary:edgeStageSummary(l2,'L2'),detail:isEdgeStageReported(l2) && asBoxes(l2.bbox).length ? `已返回 ${asBoxes(l2.bbox).length} 个 L2 框（见图例）。` : '无 L2 坐标可绘制。'},
     {key:'privacy',index:'④',title:'本地脱敏内容',state:row.privacy_status === 'privacy_processed' ? 'done' : 'blocked',summary:privacyLabel(row),detail:row.privacy_actions?.length ? `处理动作：${row.privacy_actions.join('、')}` : `处理方法：${row.privacy_method || '未上报'}`},
-    {key:'vlm',index:'⑤',title:'VLM 审计标注',state:['pending','not_run'].includes(vlm.status) ? 'waiting' : 'done',summary:`${auditModel(row)} · ${vlmDecision}${vlm.confidence ? ` · ${Math.round(Number(vlm.confidence)*100)}%` : ''}`,detail:[vlm.reason || '等待自动审计结果。', edgeVlmWarning(row)].filter(Boolean).join('；')},
+    {key:'vlm',index:'⑤',title:'VLM 审计标注',state:['pending','not_run'].includes(vlm.status) ? 'waiting' : 'done',summary:`${auditModel(row)} · ${vlmDecision}${vlm.confidence ? ` · ${Math.round(Number(vlm.confidence)*100)}%` : ''}`,detail:vlm.reason || '等待自动审计结果。'},
     {key:'human',index:'⑥',title:'人工确认 / 标注',state:human.status === 'human_reviewed' ? 'done' : 'waiting',summary:human.status === 'human_reviewed' ? `已确认${human.reviewed_at ? ` · ${formatTime(human.reviewed_at)}` : ''}` : '未人工确认',detail:human.comment || (needsHuman(row) ? '此素材需要人工确认最终类别或目标框。' : '当前自动标注可继续等待人工抽检。')},
     {key:'training',index:'⑦',title:'训练准入与最终标签',state:trainingEligible ? 'done' : 'waiting',summary:trainingEligible ? '可进入训练数据集' : '暂不可进入训练',detail:trainingEligible ? `最终标签：${row.sample_category || vlmDecision}；准入原因：隐私、授权与标注条件已满足。` : `阻塞原因：${row.blocked_reasons?.join('、') || '等待 VLM 或人工审核完成'}`},
   ]

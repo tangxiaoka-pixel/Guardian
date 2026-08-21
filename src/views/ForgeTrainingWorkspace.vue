@@ -316,7 +316,13 @@ function normaliseBox(raw:any,width:number,height:number){
     x2=a+c; y2=b+d
   }
   if(x2<=x1 || y2<=y1) return null
-  if(isNorm) return clampNormBox([x1,y1,x2,y2])
+  // Forge/Qwen uses 0..1000 normalized coordinates; a few integrations use
+  // 0..1. Support both before clamping, otherwise a valid 375..885 box is
+  // collapsed to [1,1,1,1] and disappears.
+  if(isNorm){
+    const scale=Math.max(Math.abs(x1),Math.abs(y1),Math.abs(x2),Math.abs(y2))>1.01 ? 1000 : 1
+    return clampNormBox([x1/scale,y1/scale,x2/scale,y2/scale])
+  }
   if(!width || !height) return null
   return clampNormBox([x1/width,y1/height,x2/width,y2/height])
 }

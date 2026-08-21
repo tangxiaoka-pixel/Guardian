@@ -61,6 +61,21 @@ const platformMenuGroups = [
       { path: '/model-registry', label: '模型仓库' },
     ],
   },
+  {
+    label: 'Forge 训练中心',
+    children: [
+      { path: '/forge/centers', label: '训练中心管理' },
+      { path: '/forge/activation', label: '节点注册与激活' },
+      { path: '/forge/project-bindings', label: '项目绑定' },
+      { path: '/forge/device-bindings', label: '设备绑定' },
+      { path: '/forge/sample-policies', label: '样本策略中心' },
+      { path: '/forge/model-versions', label: '模型版本中心' },
+      { path: '/forge/release-approvals', label: '模型发布审批' },
+      { path: '/forge/releases', label: '发布与回滚记录' },
+      { path: '/forge/heartbeats', label: '节点心跳监控' },
+      { path: '/forge/sync-logs', label: '同步接口日志' },
+    ],
+  },
 ]
 const projectManagerMenuGroups = [
   {

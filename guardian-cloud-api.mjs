@@ -32,6 +32,9 @@ const kkosGatewayTypes = ['rk3568', 'rk3588', 'kkos_gateway']
 const deviceHealthStaleMs = Number(process.env.GUARDIAN_DEVICE_HEALTH_STALE_MS || 2 * 60 * 1000)
 const edgeRuntimeCacheTtlMs = Number(process.env.GUARDIAN_EDGE_RUNTIME_CACHE_TTL_MS || 30 * 1000)
 const forgeRuntimeCacheTtlMs = Number(process.env.GUARDIAN_FORGE_RUNTIME_CACHE_TTL_MS || 15 * 1000)
+// Forge health includes a Windows/Python service over Tailscale. One second is
+// too aggressive for an occasional cold response and caused false offline UI.
+const forgeHealthTimeoutSec = Math.max(1, Number(process.env.GUARDIAN_FORGE_HEALTH_TIMEOUT_SEC || 5))
 const edgeDirectSshEnabled = process.env.GUARDIAN_EDGE_DIRECT_SSH_ENABLED === '1'
 const mageVlmBaseUrl = (process.env.GUARDIAN_MAGE_VLM_BASE_URL || process.env.GUARDIAN_OLLAMA_BASE_URL || 'http://100.65.222.51:11434').replace(/\/$/, '')
 // 5070Ti 的正式审计模型已迁移到 Ollama Qwen2.5-VL；保留旧变量名仅为兼容。
@@ -2492,7 +2495,7 @@ function activeVlmProviderStatus() {
 
 function forgeServiceHealth() {
   return cachedEdge('forge:health', forgeRuntimeCacheTtlMs, () => {
-    const health = fetchJsonWithTimeout(`${forgeServiceBaseUrl}/health`, 1)
+    const health = fetchJsonWithTimeout(`${forgeServiceBaseUrl}/health`, forgeHealthTimeoutSec)
     return {
       reachable: Boolean(health),
       status: !health ? 'offline' : health.loaded === false ? 'degraded' : 'ready',
